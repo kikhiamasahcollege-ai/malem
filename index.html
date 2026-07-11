@@ -49,7 +49,62 @@
       Prototype accounts live in this browser only.
       <a href="#" id="try-demo-account">Try the demo account</a>.
     </p>
+    <p class="save-note" style="margin-top:.75rem;">
+      Or <a href="#/community" id="auth-goto-community">browse the community journal</a> — no sign in needed.
+    </p>
   </form>
+</section>
+
+<!-- 1b. PUBLIC COMMUNITY -->
+<section id="screen-public" class="public" hidden>
+  <header class="public-top">
+    <div class="dash-brand" style="display:flex;align-items:baseline;gap:.5rem;">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="serif" style="font-size:1.3rem;">malem</span>
+      <span class="eyebrow" style="margin-left:.4rem;">Community journal</span>
+    </div>
+    <div class="actions">
+      <a href="#/auth" class="icon-btn" id="public-signin">Sign in</a>
+    </div>
+  </header>
+
+  <main class="public-main">
+    <div class="page-head">
+      <span class="eyebrow">Community journal</span>
+      <h1>What travelers actually did.</h1>
+      <p class="kicker">Real entries after real trips — sourced from residents, verified travelers, and members who chose to publish.</p>
+    </div>
+
+    <div class="public-filters">
+      <label class="field">
+        <span>Destination</span>
+        <select id="public-filter-dest">
+          <option value="all">All destinations</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Tag</span>
+        <select id="public-filter-tag">
+          <option value="all">All tags</option>
+          <option value="halal">Halal</option>
+          <option value="kosher">Kosher</option>
+          <option value="vegan">Vegan</option>
+          <option value="vegetarian">Vegetarian</option>
+          <option value="step-free">Step-free</option>
+          <option value="modest">Modest</option>
+          <option value="family">Family</option>
+          <option value="senior">Senior</option>
+          <option value="solo">Solo</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="public-entries" class="public-entries"></div>
+
+    <footer class="public-foot">
+      <span>malem — <a href="#/auth">Sign in to publish your own</a></span>
+    </footer>
+  </main>
 </section>
 
 <!-- 2. TRIP SETUP -->
@@ -122,6 +177,7 @@
       <a href="#/discover"  data-route="discover">Discover now</a>
       <a href="#/local"     data-route="local">Local</a>
       <a href="#/group"     data-route="group">Group &amp; journal</a>
+      <a href="#/community" data-route="community">Community</a>
     </nav>
 
     <div class="side-context">

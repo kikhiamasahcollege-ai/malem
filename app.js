@@ -156,6 +156,82 @@ const DATA = (() => {
 
   const meta = { updated: '2026-06-01', sources: ['residents','transit authorities','tourism boards'] };
 
+  // Seed community journal entries — the public "what travelers actually did" feed.
+  const communityEntries = [
+    { id: 'c1', authorName: 'Amina',   destination: 'istanbul',  date: '2026-05-12',
+      title: 'Balat and the ferry, with two under ten',
+      did: 'Swapped the Topkapı queue for a Balat morning walk. The kids drew the painted houses in a notebook while we had breakfast at a small mahalle bakery. Took the ferry to Kadıköy for lunch — best decision of the trip.',
+      change: "Skip the Grand Bazaar mid-day — the crowds hit hard by 11. Go at opening or don't bother.",
+      accessAccuracy: 'as-listed', dietAccuracy: 'better',
+      tags: ['halal','step-free','modest','family'] },
+    { id: 'c2', authorName: 'Ehsan',   destination: 'kyoto',     date: '2026-04-03',
+      title: 'Fushimi Inari before the light',
+      did: "We arrived at the base at 5:40. The lanterns were still lit; we saw maybe six other people the entire climb. Breakfast at a coffee stand outside the station on the way back.",
+      change: 'Book the ryokan closer to Fushimi — the extra sleep matters when you\'re up at five.',
+      accessAccuracy: '', dietAccuracy: 'as-listed',
+      tags: ['kosher','solo'] },
+    { id: 'c3', authorName: 'Priya',   destination: 'marrakech', date: '2026-03-19',
+      title: 'Souks on a rest day',
+      did: 'I was tired after three days of medina, so I did a slow morning at Le Jardin Secret, then Sidi Ghanem for the crafts and coffee. The pace saved the trip.',
+      change: 'Would have paid more for a riad with a real garden. The one I chose had a plunge pool and it went unused.',
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
+      tags: ['vegetarian','solo','modest'] },
+    { id: 'c4', authorName: 'Marco',   destination: 'paris',     date: '2026-06-08',
+      title: "Marché d'Aligre morning",
+      did: 'Went to the market at 9. Bought half a wheel of comté and ate it on a bench in the Coulée Verte. Small joys.',
+      change: 'Skip the Louvre — the Musée de la Vie Romantique on the same afternoon was ten times better and a fifth of the crowd.',
+      accessAccuracy: '', dietAccuracy: 'as-listed',
+      tags: ['solo'] },
+    { id: 'c5', authorName: 'Kenji',   destination: 'kyoto',     date: '2026-11-04',
+      title: "Philosopher's Path in the rain",
+      did: 'The maples were mid-turn and the drizzle kept everyone home. My mother uses a cane — the whole path was flat and the temples on either end had elevators to the main halls.',
+      change: 'Would have started earlier so we could have coffee at Blue Bottle before the walk.',
+      accessAccuracy: 'as-listed', dietAccuracy: 'as-listed',
+      tags: ['senior','step-free'] },
+    { id: 'c6', authorName: 'Sophie',  destination: 'nyc',       date: '2026-08-22',
+      title: 'Brooklyn with a stroller',
+      did: 'Rented a folding stroller from a mom in Park Slope. Did the Botanic Garden in the morning, DUMBO for the afternoon shade, and ate slices at Di Fara after the baby went down.',
+      change: 'The G train elevator was out — plan around that if you go weekend.',
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
+      tags: ['family','step-free'] },
+    { id: 'c7', authorName: 'Nour',    destination: 'istanbul',  date: '2026-05-14',
+      title: 'Wheelchair notes on Balat',
+      did: "Balat is beautiful but not step-free at all — cobbles + hills. Kadıköy was the opposite: flat, wide sidewalks, ferry with a ramp. I'd stay there next time.",
+      change: 'Ask the hotel about accessible taxis in advance. The regular ones aren\'t.',
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
+      tags: ['halal','step-free'] },
+    { id: 'c8', authorName: 'Yuki',    destination: 'paris',     date: '2026-05-01',
+      title: 'A vegan patisserie hunt',
+      did: 'Three days, six patisseries. Land&Monkeys was consistent, Cloud Cakes was fun. Skipped the tourist-heavy ones.',
+      change: 'Would have added Aujourd\'hui Demain for a proper sit-down lunch.',
+      accessAccuracy: '', dietAccuracy: 'as-listed',
+      tags: ['vegan','solo'] },
+    { id: 'c9', authorName: 'Fatima',  destination: 'marrakech', date: '2026-02-11',
+      title: 'Modest dressing in the medina',
+      did: 'Long linen everything. A shopkeeper adjusted my scarf and taught me to tie it Moroccan-style — it stayed on all day.',
+      change: 'Bring one dark scarf that hides indigo transfer from local textiles.',
+      accessAccuracy: 'as-listed', dietAccuracy: 'better',
+      tags: ['halal','modest','solo'] },
+    { id: 'c10', authorName: 'Daniel', destination: 'nyc',       date: '2026-10-14',
+      title: 'The Frick on a Wednesday',
+      did: 'Wednesday afternoon: quiet, no timed entry needed, and the reopened Fifth Avenue rooms feel like a private home.',
+      change: 'Would pair it with a walk through Central Park to the reservoir on the way out.',
+      accessAccuracy: 'better', dietAccuracy: '',
+      tags: ['solo','senior'] },
+    { id: 'c11', authorName: 'Zineb',  destination: 'istanbul',  date: '2026-06-01',
+      title: 'Iftar tables in Sultanahmet',
+      did: 'Public iftar at the Blue Mosque grounds. Strangers passed dates, an aunt insisted I take her extra tea. I have never felt more welcomed anywhere.',
+      change: 'Arrive an hour before maghrib — you\'ll get a proper seat.',
+      accessAccuracy: 'as-listed', dietAccuracy: 'better',
+      tags: ['halal','modest','family'] },
+    { id: 'c12', authorName: 'Hannah', destination: 'paris',     date: '2026-09-20',
+      title: 'Fête des Vendanges in Montmartre',
+      did: "Wine harvest weekend. A choir on Rue Lepic, tastings in the vineyard, and dinner at a bistro that hadn't caught on to the crowd yet.",
+      change: 'Book the bistro. We got lucky and shouldn\'t rely on it.',
+      accessAccuracy: '', dietAccuracy: 'as-listed',
+      tags: ['solo'] },
+  ];
+
   // Curated Unsplash editorial photo IDs, chosen for warm/neutral fashion mood.
   // (URLs use images.unsplash.com direct — network hosting shows them; sandboxed previews fall back to gradient tiles.)
   const outfitImages = {
@@ -166,7 +242,7 @@ const DATA = (() => {
     'accessory': ['1483985988355-763728e1935b','1541101767792-f9b2b1c4f127','1571513800374-df1bbe650e56','1517254797898-04edd251bfb3'],
   };
 
-  return { destinations, weatherLine, VIBES, places, expectations, meta, outfitImages };
+  return { destinations, weatherLine, VIBES, places, expectations, meta, outfitImages, communityEntries };
 })();
 
 // ---------- engine ----------
@@ -654,7 +730,7 @@ const ui = (() => {
   const parseIntList = (s) => parseList(s).map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0);
 
   const showScreen = (name) => {
-    ['auth','setup','dash'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
+    ['auth','setup','dash','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
   const populateDestinations = () => {
@@ -1137,6 +1213,8 @@ const ui = (() => {
 
   // Route handling — one page visible at a time
   const showRoute = () => {
+    // If the hash is for a public/auth surface, delegate to the top-level router.
+    if ((location.hash || '').startsWith('#/community') || location.hash === '#/auth') { route(); return; }
     // Only render dashboard pages when the dashboard screen is actually up.
     if ($('#screen-dash').hidden) return;
     const me = auth.current(); if (!me) return;
@@ -1159,14 +1237,113 @@ const ui = (() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
-  // Router: authenticate, then trip-setup, then dashboard
-  const route = () => {
+  // ---- Community (public) ----
+  const getCommunityEntries = () => {
+    // Bring together seed entries + any *local* accounts' public journal entries,
+    // so users who publish appear alongside the seeded community feed.
+    const seeds = (DATA.communityEntries || []).map(e => ({ ...e, source: 'seed' }));
+    const localAccounts = store.accounts.all();
+    const local = [];
+    Object.entries(localAccounts).forEach(([email, acc]) => {
+      const j = store.journal.load(email);
+      const trip = store.trip.load(email);
+      j.filter(x => x.publicEntry).forEach(x => {
+        local.push({
+          id: `local-${email}-${x.id}`,
+          authorName: acc.name || email.split('@')[0],
+          destination: trip?.destination || 'unknown',
+          date: x.date || '',
+          title: x.title,
+          did: x.did, change: x.change,
+          accessAccuracy: x.accessAccuracy, dietAccuracy: x.dietAccuracy,
+          tags: [],
+          source: 'local',
+        });
+      });
+    });
+    // Newest first (by date string; safe fallback if empty)
+    return [...seeds, ...local].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  };
+
+  const initPublic = () => {
+    // Populate destination filter from DATA
+    const destSel = $('#public-filter-dest');
+    DATA.destinations.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.key; o.textContent = `${d.name} — ${d.country}`;
+      destSel.appendChild(o);
+    });
+    destSel.addEventListener('change', renderCommunity);
+    $('#public-filter-tag').addEventListener('change', renderCommunity);
+
+    // The "Sign in" link on public bar goes back to the auth gate.
+    $('#public-signin').addEventListener('click', (e) => {
+      e.preventDefault(); location.hash = '#/auth';
+    });
+    $('#auth-goto-community').addEventListener('click', (e) => {
+      // Anchor click; nothing to do beyond letting the hash change fire the router.
+    });
+  };
+
+  const renderCommunity = () => {
+    // Relabel the top-right button based on session state.
     const me = auth.current();
+    const btn = $('#public-signin');
+    if (me) { btn.textContent = 'Back to your trip'; btn.setAttribute('href', '#/itinerary'); }
+    else    { btn.textContent = 'Sign in';           btn.setAttribute('href', '#/auth'); }
+
+    const dest = $('#public-filter-dest').value;
+    const tag  = $('#public-filter-tag').value;
+    let entries = getCommunityEntries();
+    if (dest !== 'all') entries = entries.filter(e => e.destination === dest);
+    if (tag  !== 'all') entries = entries.filter(e => (e.tags || []).includes(tag));
+
+    const root = $('#public-entries');
+    if (!entries.length) { root.innerHTML = `<p class="hint">Nothing yet in that view. Try another filter.</p>`; return; }
+    root.innerHTML = entries.map(e => {
+      const destName = DATA.destinations.find(d => d.key === e.destination)?.name || e.destination;
+      return `
+        <article class="pub-entry">
+          <div class="head">
+            <div>
+              <h3>${escapeHtml(e.title)}${e.source === 'local' ? '<span class="badge-local">Yours</span>' : ''}</h3>
+              <div class="author">by ${escapeHtml(e.authorName)}${e.date ? ` · ${escapeHtml(e.date)}` : ''}</div>
+            </div>
+            <span class="dest">${escapeHtml(destName)}</span>
+          </div>
+          <div class="body">
+            ${e.did    ? `<p><strong>Did</strong>${escapeHtml(e.did)}</p>` : ''}
+            ${e.change ? `<p><strong>Change</strong>${escapeHtml(e.change)}</p>` : ''}
+          </div>
+          ${(e.tags && e.tags.length) || e.accessAccuracy || e.dietAccuracy ? `
+            <div class="tags">
+              ${(e.tags || []).map(t => `<span>${escapeHtml(t)}</span>`).join('')}
+              ${e.accessAccuracy ? `<span>Access ${escapeHtml(e.accessAccuracy)}</span>` : ''}
+              ${e.dietAccuracy   ? `<span>Dietary ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
+            </div>` : ''}
+        </article>`;
+    }).join('');
+  };
+
+  // Router: community is always public; otherwise sign-in → setup → dashboard.
+  const route = () => {
+    // Community view is public — anyone can browse it.
+    if ((location.hash || '').startsWith('#/community')) {
+      renderCommunity();
+      showScreen('public');
+      return;
+    }
+    const me = auth.current();
+    // Not signed in → auth screen (regardless of hash).
     if (!me) { showScreen('auth'); return; }
+    // Signed in but no trip → setup screen.
     const trip = store.trip.load(me.email);
     if (!trip) { setupRender && setupRender(); showScreen('setup'); return; }
+    // Signed in with a trip → dashboard. Ignore #/auth left over from public nav.
     renderSidebar(me, trip);
-    if (!location.hash) location.hash = '#/itinerary';
+    if (!location.hash || location.hash === '#/auth') {
+      history.replaceState(null, '', '#/itinerary');
+    }
     showScreen('dash');
     showRoute();
   };
@@ -1178,6 +1355,8 @@ const ui = (() => {
       initAuth();
       const s = initSetup(); setupRender = s.render;
       initDash();
+      initPublic();
+      window.addEventListener('hashchange', route);
       route();
     },
   };

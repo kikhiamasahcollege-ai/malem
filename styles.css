@@ -648,5 +648,93 @@ textarea {
   .sheet-panel { border-left: 0; }
 }
 
+/* --- Public community page --- */
+.public { min-height: 100vh; background: var(--bg); }
+.public[hidden] { display: none; }
+.public-top {
+  border-bottom: 1px solid var(--hairline);
+  padding: 1rem 2rem;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+.public-top .dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--ink);
+  transform: translateY(-.2em);
+}
+.public-top .icon-btn { text-decoration: none; }
+.public-main { max-width: 900px; margin: 0 auto; padding: 3.5rem 2rem 4rem; }
+
+.public-filters {
+  display: grid; gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 2.5rem;
+}
+
+.public-entries {
+  columns: 2 340px;
+  column-gap: 1.5rem;
+}
+.pub-entry {
+  break-inside: avoid;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem 1.5rem;
+  margin: 0 0 1.5rem;
+  box-shadow: var(--shadow);
+}
+.pub-entry .head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+  margin-bottom: .8rem;
+}
+.pub-entry .head .dest {
+  font-family: var(--font-sans); font-size: .68rem;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3);
+}
+.pub-entry h3 {
+  font-family: var(--font-serif); font-size: 1.25rem; line-height: 1.2;
+  margin-bottom: .35rem;
+}
+.pub-entry .author {
+  font-family: var(--font-serif); font-style: italic; color: var(--ink-2);
+  font-size: .95rem; margin-bottom: .8rem;
+}
+.pub-entry .body { display: grid; gap: .5rem; margin-bottom: .8rem; }
+.pub-entry .body strong {
+  display: inline-block;
+  font-family: var(--font-sans); font-size: .68rem;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3);
+  margin-right: .35rem;
+}
+.pub-entry .body p { font-family: var(--font-serif); font-size: 1rem; line-height: 1.5; }
+.pub-entry .tags {
+  display: flex; flex-wrap: wrap; gap: .3rem;
+  border-top: 1px solid var(--hairline); padding-top: .8rem;
+  font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
+}
+.pub-entry .tags span::before { content: '· '; color: var(--hairline); }
+.pub-entry .tags span:first-child::before { content: ''; }
+.pub-entry .badge-local {
+  display: inline-block;
+  padding: .05rem .45rem; margin-left: .5rem;
+  border: 1px solid var(--camel); color: var(--camel);
+  border-radius: 999px;
+  font-size: .62rem; letter-spacing: .18em; text-transform: uppercase;
+}
+
+.public-foot {
+  border-top: 1px solid var(--hairline);
+  padding: 1.5rem 0 0; margin-top: 3rem;
+  color: var(--ink-3); font-size: .82rem;
+}
+
+@media (max-width: 640px) {
+  .public-top { padding: 1rem 1.25rem; }
+  .public-main { padding: 3rem 1.25rem 2rem; }
+  .public-entries { columns: 1; }
+}
+
 /* Screen states */
 .dash[hidden], .gate[hidden] { display: none; }
