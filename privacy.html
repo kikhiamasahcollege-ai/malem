@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Privacy policy — malem</title>
+<meta name="description" content="malem is a client-side travel-planning prototype. This page describes exactly what it does and does not do with your data." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="./styles.css" />
+<style>
+  body { padding: 3.5rem 1.5rem 5rem; }
+  .doc { max-width: 720px; margin: 0 auto; }
+  .doc h1 { margin-bottom: .6rem; }
+  .doc h2 { margin: 2.5rem 0 .6rem; font-size: 1.4rem; }
+  .doc h3 { margin: 1.6rem 0 .4rem; font-size: 1.1rem; }
+  .doc p, .doc li { font-family: var(--font-serif); font-size: 1.05rem; line-height: 1.65; color: var(--ink); }
+  .doc ul { padding-left: 1.25rem; margin: .5rem 0 1rem; display: grid; gap: .35rem; }
+  .doc .updated { color: var(--ink-3); font-size: .82rem; letter-spacing: .18em; text-transform: uppercase; margin-bottom: 2rem; font-family: var(--font-sans); }
+  .doc a.back {
+    display: inline-flex; align-items: baseline; gap: .5rem;
+    color: var(--ink-3); text-decoration: none; font-size: .82rem;
+    letter-spacing: .18em; text-transform: uppercase; margin-bottom: 2.5rem;
+  }
+  .doc a.back:hover { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="doc">
+  <a class="back" href="./">← Back to malem</a>
+
+  <span class="updated">Updated 11 July 2026</span>
+  <h1>Privacy policy</h1>
+  <p>malem is a prototype travel-planning website. It is a static site that runs entirely in your browser. This page describes exactly what it does and does not do with your information.</p>
+
+  <h2>Short version</h2>
+  <p>malem does not run a server that collects your data. Everything you type, save, and connect stays inside your browser's local storage on your own device. When you use an optional integration (OpenAI, Anthropic, Pinterest), your browser talks directly to that provider using a key or token that you provide — that data is subject to <em>their</em> privacy policy, not ours.</p>
+
+  <h2>What malem stores on your device</h2>
+  <p>The following are saved in this browser's <code>localStorage</code> and are never sent anywhere by malem itself:</p>
+  <ul>
+    <li>Your prototype account details (name, email, and a non-cryptographic password hash).</li>
+    <li>Your travel profile (vibes, budget, pace, dietary preferences, accessibility notes, religious and cultural notes, modesty preferences, medical notes, family notes, places to avoid).</li>
+    <li>Your saved trips and their chat history.</li>
+    <li>Your group members' names and constraints.</li>
+    <li>Your trip journal entries, including entries you mark as public.</li>
+    <li>Any API keys you choose to enter (OpenAI, Anthropic).</li>
+    <li>Any Pinterest access token issued to you after you complete the Pinterest OAuth flow, plus the App ID you configured.</li>
+    <li>Your interface preferences (theme).</li>
+  </ul>
+  <p>Clearing your browser's site data for this domain permanently deletes everything above.</p>
+
+  <h2>What malem does not do</h2>
+  <ul>
+    <li>malem does not run any backend server that receives, stores, or logs your data.</li>
+    <li>malem does not use analytics, tracking pixels, advertising SDKs, or fingerprinting.</li>
+    <li>malem does not set third-party cookies.</li>
+    <li>malem does not sell, share, or transmit your data to any third party.</li>
+    <li>malem does not read your Pinterest content beyond the boards and pins on the specific board you select.</li>
+  </ul>
+
+  <h2>Optional integrations you can enable</h2>
+
+  <h3>OpenAI</h3>
+  <p>If you paste an OpenAI API key in Settings, your chat prompts are sent directly from your browser to <a href="https://api.openai.com" target="_blank" rel="noopener">api.openai.com</a> using that key. malem is not a proxy — the request bypasses us entirely. See <a href="https://openai.com/policies/privacy-policy" target="_blank" rel="noopener">OpenAI's privacy policy</a>.</p>
+
+  <h3>Anthropic (Claude)</h3>
+  <p>If you paste an Anthropic API key, your chat prompts are sent directly from your browser to <a href="https://api.anthropic.com" target="_blank" rel="noopener">api.anthropic.com</a> using that key. See <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>.</p>
+
+  <h3>Pinterest</h3>
+  <p>If you connect Pinterest, malem starts an OAuth 2.0 authorization flow (with PKCE) against <a href="https://www.pinterest.com" target="_blank" rel="noopener">pinterest.com</a> using the App ID you provide. When you approve access, Pinterest returns an access token to your browser. malem uses that token to request the list of your boards and, for the single board you select, the images on that board — nothing more. Both the App ID and the access token are stored only in this browser. See <a href="https://policy.pinterest.com/en/privacy-policy" target="_blank" rel="noopener">Pinterest's privacy policy</a>.</p>
+
+  <h2>Community journal</h2>
+  <p>The community journal page displays a set of seeded example entries plus any journal entries you have marked as "Publish publicly" in this browser. Because malem has no backend, "publish publicly" only means that other accounts on <em>this same browser</em> can see the entry through the community view. Your entries do not leave your device unless you explicitly share them elsewhere.</p>
+
+  <h2>Security</h2>
+  <p>malem's account and password system is a prototype and is not a secure authentication mechanism. Do not reuse a password you use anywhere else. The password hash stored locally is not cryptographic and is intended only to keep multiple accounts on the same browser separated.</p>
+  <p>API keys and OAuth tokens stored in <code>localStorage</code> can be read by any JavaScript that runs on this domain. Only paste keys you understand and can revoke.</p>
+
+  <h2>Children</h2>
+  <p>malem is not directed at children under 13. Trip planning features include fields for children's ages and family constraints so an adult traveler can plan for their family, but children should not create accounts.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the updated date at the top of this page will change and the new version will be visible at this URL.</p>
+
+  <h2>Contact</h2>
+  <p>malem is an open-source prototype maintained at <a href="https://github.com/kikhiamasahcollege-ai/malem" target="_blank" rel="noopener">github.com/kikhiamasahcollege-ai/malem</a>. Questions and issues can be filed there.</p>
+</div>
+</body>
+</html>
