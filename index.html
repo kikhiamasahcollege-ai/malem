@@ -16,10 +16,14 @@
     <span class="tagline">a travel companion that understands you</span>
   </div>
   <nav class="tabs" role="tablist" aria-label="Sections">
-    <button class="tab" role="tab" data-tab="home"    aria-selected="true">Home</button>
-    <button class="tab" role="tab" data-tab="profile" aria-selected="false">Profile</button>
-    <button class="tab" role="tab" data-tab="vibes"   aria-selected="false">Choose your vibe</button>
-    <button class="tab" role="tab" data-tab="soon"    aria-selected="false">Coming soon</button>
+    <button class="tab" role="tab" data-tab="home"     aria-selected="true">Home</button>
+    <button class="tab" role="tab" data-tab="profile"  aria-selected="false">Profile</button>
+    <button class="tab" role="tab" data-tab="vibes"    aria-selected="false">Choose your vibe</button>
+    <button class="tab" role="tab" data-tab="packing"  aria-selected="false">Packing</button>
+    <button class="tab" role="tab" data-tab="discover" aria-selected="false">Discover now</button>
+    <button class="tab" role="tab" data-tab="local"    aria-selected="false">Local</button>
+    <button class="tab" role="tab" data-tab="expect"   aria-selected="false">What to expect</button>
+    <button class="tab" role="tab" data-tab="group"    aria-selected="false">Group &amp; journal</button>
   </nav>
 </header>
 
@@ -35,9 +39,10 @@
       control you set, not an assumption we make.
     </p>
     <div class="cta-row">
-      <button class="btn primary" data-goto="profile">Set up your profile</button>
-      <button class="btn ghost"   data-goto="vibes">Try a vibe itinerary</button>
+      <button class="btn primary" id="load-demo">Try the demo trip</button>
+      <button class="btn ghost"   data-goto="profile">Set up your own profile</button>
     </div>
+    <p class="demo-note" id="demo-note" aria-live="polite"></p>
   </div>
 
   <div class="grid features">
@@ -253,23 +258,334 @@
   <section id="itinerary-output" hidden></section>
 </section>
 
-<section class="panel" data-panel="soon" hidden>
+<section class="panel" data-panel="packing" hidden>
   <div class="section-head">
-    <h2>Coming soon</h2>
+    <h2>Packing planner</h2>
     <p class="lede">
-      These features are in the vision doc and next up on the roadmap.
-      This scaffold focuses on the profile and vibe itineraries first.
+      Forecast, activities, laundry access, medication and mobility needs,
+      faith attire, and local rules all shape the list.
     </p>
   </div>
-  <div class="grid features">
-    <article><h3>Packing planner</h3><p>Forecast + activities + luggage + medication → what to pack, buy, rent, and skip. Escalating reminders.</p></article>
-    <article><h3>Discover Now</h3><p>Right now, right here, right weather, right budget. Mini-itineraries, not a list of businesses.</p></article>
-    <article><h3>Local discovery</h3><p>Balanced sourcing — icons, neighborhood favorites, small businesses, seasonal events, resident-verified.</p></article>
-    <article><h3>What to Expect</h3><p>Practical prep per destination: etiquette, tipping, transit, scams, prayer facilities, accessibility realities.</p></article>
-    <article><h3>Group planning</h3><p>Shared trip, individual packing lists, vibe voting, restrictions respected per traveler.</p></article>
-    <article><h3>Trip journals</h3><p>What you actually did, what to change, accessibility/dietary accuracy, outfit inspiration.</p></article>
+
+  <form id="packing-form" class="stack">
+    <fieldset class="card two-col">
+      <legend>Trip context</legend>
+      <label class="field">
+        <span>Destination</span>
+        <select name="destination" data-destinations></select>
+      </label>
+      <label class="field">
+        <span>Duration (days)</span>
+        <input type="number" name="days" min="1" max="30" value="5" />
+      </label>
+      <label class="field">
+        <span>Season</span>
+        <select name="season">
+          <option value="spring">Spring</option>
+          <option value="summer" selected>Summer</option>
+          <option value="autumn">Autumn</option>
+          <option value="winter">Winter</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Luggage</span>
+        <select name="luggage">
+          <option value="carry-on">Carry-on only</option>
+          <option value="checked" selected>Carry-on + checked</option>
+          <option value="backpack">Backpack (backpacking)</option>
+        </select>
+      </label>
+      <label class="field">
+        <label class="inline-check"><input type="checkbox" name="laundry" checked /> <span>Laundry available on trip</span></label>
+      </label>
+      <label class="field">
+        <label class="inline-check"><input type="checkbox" name="rentThere" /> <span>Willing to buy/rent locally</span></label>
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Planned activities</legend>
+      <p class="hint">Multi-select. Shapes clothing, footwear, and gear.</p>
+      <div class="chips" data-chips="activities">
+        <label><input type="checkbox" value="walking-city" /><span>City walking</span></label>
+        <label><input type="checkbox" value="hiking" /><span>Hiking</span></label>
+        <label><input type="checkbox" value="beach" /><span>Beach / swim</span></label>
+        <label><input type="checkbox" value="fine-dining" /><span>Fine dining</span></label>
+        <label><input type="checkbox" value="religious-sites" /><span>Religious sites</span></label>
+        <label><input type="checkbox" value="museums" /><span>Museums</span></label>
+        <label><input type="checkbox" value="cold-weather" /><span>Cold-weather activity</span></label>
+        <label><input type="checkbox" value="tropical" /><span>Tropical / humid</span></label>
+      </div>
+    </fieldset>
+
+    <div class="sticky-actions">
+      <button type="button" class="btn primary" id="build-packing">Build packing list</button>
+      <span class="save-note" id="packing-note" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="packing-output" hidden></section>
+</section>
+
+<section class="panel" data-panel="discover" hidden>
+  <div class="section-head">
+    <h2>Discover now</h2>
+    <p class="lede">
+      Right here, right now, right weather. Three instantly usable mini-itineraries,
+      not a list of businesses.
+    </p>
   </div>
-  <p class="lede">See <a href="./docs/vision.md">docs/vision.md</a> for the full spec.</p>
+
+  <form id="discover-form" class="stack">
+    <fieldset class="card two-col">
+      <legend>Right now</legend>
+      <label class="field">
+        <span>You're in</span>
+        <select name="destination" data-destinations></select>
+      </label>
+      <label class="field">
+        <span>Available time</span>
+        <select name="hours">
+          <option value="1">About an hour</option>
+          <option value="2">Two hours</option>
+          <option value="3" selected>Three hours</option>
+          <option value="5">Half a day</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Weather</span>
+        <select name="weather">
+          <option value="clear" selected>Clear</option>
+          <option value="light-rain">Light rain</option>
+          <option value="heavy-rain">Heavy rain</option>
+          <option value="hot">Hot &amp; sunny</option>
+          <option value="cold">Cold</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Energy level</span>
+        <select name="energy">
+          <option value="low">Low — sit-down mostly</option>
+          <option value="mid" selected>Balanced</option>
+          <option value="high">High — long walk is fine</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Party</span>
+        <select name="party">
+          <option value="solo">Solo</option>
+          <option value="couple" selected>Couple</option>
+          <option value="family">With kids</option>
+          <option value="friends">Friends</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Budget for this outing</span>
+        <select name="outingBudget">
+          <option value="light">Light</option>
+          <option value="mid" selected>Mid</option>
+          <option value="treat">Treat yourself</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <div class="sticky-actions">
+      <button type="button" class="btn primary" id="build-discover">Show me three plans</button>
+      <span class="save-note" id="discover-note" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="discover-output" hidden></section>
+</section>
+
+<section class="panel" data-panel="local" hidden>
+  <div class="section-head">
+    <h2>Local discovery</h2>
+    <p class="lede">
+      A balanced feed — icons and neighborhood favorites, small businesses
+      and hidden gems. "Hidden gem" is judged by local sentiment and repeat
+      visitors, not raw popularity.
+    </p>
+  </div>
+
+  <form id="local-form" class="stack">
+    <fieldset class="card two-col">
+      <legend>Show me</legend>
+      <label class="field">
+        <span>Destination</span>
+        <select name="destination" data-destinations></select>
+      </label>
+      <label class="field">
+        <span>Category</span>
+        <select name="category">
+          <option value="all" selected>All</option>
+          <option value="food">Food &amp; drink</option>
+          <option value="shopping">Shops &amp; markets</option>
+          <option value="sights">Sights &amp; culture</option>
+          <option value="outdoors">Outdoors</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Balance</legend>
+      <div class="chips" data-chips="local-mix">
+        <label><input type="checkbox" value="famous" checked /><span>Famous</span></label>
+        <label><input type="checkbox" value="neighborhood" checked /><span>Neighborhood favorites</span></label>
+        <label><input type="checkbox" value="small-business" checked /><span>Small business</span></label>
+        <label><input type="checkbox" value="hidden" checked /><span>Hidden</span></label>
+        <label><input type="checkbox" value="seasonal" checked /><span>Seasonal / events</span></label>
+      </div>
+    </fieldset>
+
+    <div class="sticky-actions">
+      <button type="button" class="btn primary" id="build-local">Show places</button>
+      <span class="save-note" id="local-note" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="local-output" hidden></section>
+</section>
+
+<section class="panel" data-panel="expect" hidden>
+  <div class="section-head">
+    <h2>What to expect</h2>
+    <p class="lede">
+      Practical prep per destination. Every item is dated, sourced, and
+      labeled by confidence — cultural notes explain variation instead of
+      presenting stereotypes as universal.
+    </p>
+  </div>
+
+  <form id="expect-form" class="stack">
+    <fieldset class="card two-col">
+      <legend>Destination</legend>
+      <label class="field">
+        <span>Where are you going?</span>
+        <select name="destination" data-destinations></select>
+      </label>
+    </fieldset>
+  </form>
+
+  <section id="expect-output" hidden></section>
+</section>
+
+<section class="panel" data-panel="group" hidden>
+  <div class="section-head">
+    <h2>Group &amp; journal</h2>
+    <p class="lede">
+      Every traveler brings their own profile snippet — so a group itinerary
+      can respect one person's step-free needs, another's halal diet, and a
+      kid's nap schedule at the same time. After the trip, publish what you
+      actually did.
+    </p>
+  </div>
+
+  <div class="grid two">
+    <section class="card">
+      <h3 class="card-head">Trip members</h3>
+      <p class="hint">Each member's constraints layer onto the shared trip.</p>
+      <ul id="members-list" class="members"></ul>
+
+      <form id="member-form" class="stack member-form">
+        <div class="two-col-inline">
+          <label class="field">
+            <span>Name</span>
+            <input type="text" name="name" placeholder="e.g., Amina" required />
+          </label>
+          <label class="field">
+            <span>Age band</span>
+            <select name="ageBand">
+              <option value="adult" selected>Adult</option>
+              <option value="teen">Teen</option>
+              <option value="child">Child (5–12)</option>
+              <option value="toddler">Toddler / baby</option>
+              <option value="senior">Senior</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Their constraints (comma-separated)</span>
+          <input type="text" name="constraints" placeholder="halal, step-free, medication reminders, kosher, low-hearing…" />
+        </label>
+        <div class="two-col-inline">
+          <label class="field">
+            <span>Their preferred vibe</span>
+            <select name="vibe">
+              <option value="">(no strong pref)</option>
+              <option value="live-like-local">Live like a local</option>
+              <option value="iconic-first-visit">Iconic first visit</option>
+              <option value="relaxed-scenic">Relaxed &amp; scenic</option>
+              <option value="hidden-gems">Hidden gems</option>
+              <option value="family-adventure">Family adventure</option>
+              <option value="halal-food-culture">Halal food &amp; culture</option>
+              <option value="luxury-without-rush">Luxury without rush</option>
+            </select>
+          </label>
+          <div class="field">
+            <span>&nbsp;</span>
+            <button type="button" class="btn ghost" id="add-member">Add member</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h3 class="card-head">Vibe voting</h3>
+      <p class="hint">A blended vibe emerges from what people want.</p>
+      <div id="vote-tally" class="tally"></div>
+      <div id="shared-summary" class="shared-summary"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h3 class="card-head">Trip journal</h3>
+    <p class="hint">After the trip. What actually happened is more useful than what was planned.</p>
+
+    <form id="journal-form" class="stack">
+      <label class="field">
+        <span>Entry title</span>
+        <input type="text" name="title" placeholder="Day 2 — the market and the mosque" />
+      </label>
+      <label class="field">
+        <span>What you actually did</span>
+        <textarea name="did" rows="2" placeholder="We swapped the palace visit for the small covered market near…"></textarea>
+      </label>
+      <label class="field">
+        <span>What you'd change next time</span>
+        <textarea name="change" rows="2" placeholder="Skip the afternoon queue at…"></textarea>
+      </label>
+      <div class="two-col-inline">
+        <label class="field">
+          <span>Accessibility accuracy</span>
+          <select name="accessAccuracy">
+            <option value="">—</option>
+            <option value="as-listed">As listed</option>
+            <option value="worse">Worse than listed</option>
+            <option value="better">Better than listed</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Dietary accuracy</span>
+          <select name="dietAccuracy">
+            <option value="">—</option>
+            <option value="as-listed">As listed</option>
+            <option value="worse">Worse than listed</option>
+            <option value="better">Better than listed</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <label class="inline-check"><input type="checkbox" name="publicEntry" /> <span>Publish publicly (opt-in only)</span></label>
+      </label>
+      <div class="sticky-actions">
+        <button type="button" class="btn primary" id="add-journal">Add entry</button>
+        <span class="save-note" id="journal-note" aria-live="polite"></span>
+      </div>
+    </form>
+
+    <ul id="journal-list" class="journal"></ul>
+  </section>
 </section>
 
 </main>
