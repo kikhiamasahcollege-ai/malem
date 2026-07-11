@@ -887,5 +887,54 @@ textarea {
 }
 .side-context .actions button { margin: 0; text-align: left; }
 
+/* --- Connected accounts tiles (Settings sheet) --- */
+.conn-tile {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: 1.1rem 1.25rem 1.25rem;
+  margin: 0;
+  background: var(--surface);
+  display: grid; gap: .75rem;
+}
+.conn-tile + .conn-tile { margin-top: .8rem; }
+.conn-legend {
+  display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+  padding: 0 .3rem 0 0;
+  font-family: var(--font-serif); font-size: 1.15rem;
+}
+.conn-mark {
+  font-size: 1.1rem; color: var(--camel);
+  transform: translateY(-.1em);
+}
+.conn-status {
+  margin-left: auto;
+  font-family: var(--font-sans); font-size: .7rem;
+  letter-spacing: .18em; text-transform: uppercase;
+  color: var(--ink-3);
+  padding: .12rem .55rem; border-radius: 999px;
+  border: 1px solid var(--hairline); background: var(--bg);
+}
+.conn-tile[data-connected="true"] .conn-status {
+  color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.conn-actions { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-top: .4rem; }
+.setup-help { color: var(--ink-2); font-size: .9rem; }
+.setup-help summary {
+  cursor: pointer; color: var(--ink);
+  font-family: var(--font-serif); font-style: italic;
+  padding: .25rem 0; margin-bottom: .35rem;
+}
+.setup-help ol { margin: .35rem 0 .75rem 1.15rem; padding: 0; display: grid; gap: .35rem; }
+.setup-help li { line-height: 1.5; }
+.callout {
+  display: inline-block; margin-top: .35rem;
+  padding: .18rem .5rem; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--hairline);
+  color: var(--ink); font-size: .82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
 /* Screen states */
 .dash[hidden], .gate[hidden] { display: none; }

@@ -78,10 +78,31 @@ const store = (() => {
     journal:{ load: (e) => readJSON(K.journal(e), []), save: (e, j) => localStorage.setItem(K.journal(e), JSON.stringify(j)), clear: (e) => localStorage.removeItem(K.journal(e)) },
     theme:  { get: () => localStorage.getItem(K.theme) || '', set: (t) => t ? localStorage.setItem(K.theme, t) : localStorage.removeItem(K.theme) },
     ai: {
+      openaiKey:    { get: () => localStorage.getItem(K.openaiKey) || '',
+                      set: (k) => k ? localStorage.setItem(K.openaiKey, k) : localStorage.removeItem(K.openaiKey) },
+      openaiModel:  { get: () => localStorage.getItem(K.openaiModel) || 'gpt-4o-mini',
+                      set: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel) },
+      claudeKey:    { get: () => localStorage.getItem('malem.anthropicKey.v1') || '',
+                      set: (k) => k ? localStorage.setItem('malem.anthropicKey.v1', k) : localStorage.removeItem('malem.anthropicKey.v1') },
+      claudeModel:  { get: () => localStorage.getItem('malem.anthropicModel.v1') || 'claude-3-5-sonnet-latest',
+                      set: (m) => m ? localStorage.setItem('malem.anthropicModel.v1', m) : localStorage.removeItem('malem.anthropicModel.v1') },
+      provider:     { get: () => localStorage.getItem('malem.aiProvider.v1') || 'auto',
+                      set: (p) => p ? localStorage.setItem('malem.aiProvider.v1', p) : localStorage.removeItem('malem.aiProvider.v1') },
+      // Back-compat for older callers:
       getKey:   () => localStorage.getItem(K.openaiKey) || '',
       setKey:   (k) => k ? localStorage.setItem(K.openaiKey, k) : localStorage.removeItem(K.openaiKey),
       getModel: () => localStorage.getItem(K.openaiModel) || 'gpt-4o-mini',
       setModel: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel),
+    },
+    pinterest: {
+      clientId: { get: () => localStorage.getItem('malem.pinterestClientId.v1') || '',
+                  set: (v) => v ? localStorage.setItem('malem.pinterestClientId.v1', v) : localStorage.removeItem('malem.pinterestClientId.v1') },
+      token:    { get: () => localStorage.getItem('malem.pinterestToken.v1') || '',
+                  set: (v) => v ? localStorage.setItem('malem.pinterestToken.v1', v) : localStorage.removeItem('malem.pinterestToken.v1') },
+      board:    { get: () => localStorage.getItem('malem.pinterestBoard.v1') || '',
+                  set: (v) => v ? localStorage.setItem('malem.pinterestBoard.v1', v) : localStorage.removeItem('malem.pinterestBoard.v1') },
+      user:     { get: () => { try { return JSON.parse(localStorage.getItem('malem.pinterestUser.v1')); } catch { return null; } },
+                  set: (v) => v ? localStorage.setItem('malem.pinterestUser.v1', JSON.stringify(v)) : localStorage.removeItem('malem.pinterestUser.v1') },
     },
   };
 })();
@@ -419,18 +440,24 @@ const parser = (() => {
   return { parseTrip, mergeProfile };
 })();
 
-// ---------- ai: optional OpenAI wrapper ----------
+// ---------- ai: OpenAI + Anthropic wrappers ----------
 const ai = (() => {
-  const hasKey = () => !!store.ai.getKey();
-  const enabled = () => hasKey();
+  const hasOpenAI = () => !!store.ai.openaiKey.get();
+  const hasClaude = () => !!store.ai.claudeKey.get();
+  const enabled = () => hasOpenAI() || hasClaude();
+  const provider = () => {
+    const pref = store.ai.provider.get();
+    if (pref === 'openai' && hasOpenAI()) return 'openai';
+    if (pref === 'claude' && hasClaude()) return 'claude';
+    // Auto: prefer Claude when both are present.
+    if (hasClaude()) return 'claude';
+    if (hasOpenAI()) return 'openai';
+    return null;
+  };
 
-  const parseTripViaGPT = async (userInput, priorMessages = []) => {
-    const key = store.ai.getKey();
-    if (!key) throw new Error('No OpenAI key set.');
-    const model = store.ai.getModel();
-    const sys = `You are malem, a warm and precise travel-planning assistant.
+  const SYSTEM_PROMPT = `You are malem, a warm and precise travel-planning assistant.
 
-Given a user's free-form description of a trip, return STRICT JSON with:
+Given the user's free-form description of a trip, return STRICT JSON with:
 {
   "reply": "one short conversational reply, first person, warm, under 40 words",
   "trip": {
@@ -455,20 +482,192 @@ Given a user's free-form description of a trip, return STRICT JSON with:
 }
 
 If destination is not one of the five, set destination null and put a friendly clarifying question in "reply".
-Never invent constraints the user didn't state. Fields not stated → null / false / empty.`;
+Never invent constraints the user didn't state. Fields not stated → null / false / empty.
+Respond with ONLY the JSON object — no prose, no code fences.`;
 
-    const messages = [{ role: 'system', content: sys }, ...priorMessages, { role: 'user', content: userInput }];
+  const askOpenAI = async (userInput) => {
+    const key = store.ai.openaiKey.get();
+    if (!key) throw new Error('No OpenAI key set.');
+    const model = store.ai.openaiModel.get();
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model, messages, response_format: { type: 'json_object' }, temperature: 0.3 }),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user',   content: userInput },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+      }),
     });
     if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}`);
     const data = await res.json();
     return JSON.parse(data.choices[0].message.content);
   };
 
-  return { enabled, hasKey, parseTripViaGPT };
+  const askClaude = async (userInput) => {
+    const key = store.ai.claudeKey.get();
+    if (!key) throw new Error('No Anthropic key set.');
+    const model = store.ai.claudeModel.get();
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userInput }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Claude returned no JSON object.');
+    return JSON.parse(jsonMatch[0]);
+  };
+
+  const parseTripViaGPT = async (userInput) => {
+    const p = provider();
+    if (p === 'claude') return await askClaude(userInput);
+    if (p === 'openai') return await askOpenAI(userInput);
+    throw new Error('No AI provider configured.');
+  };
+
+  // Legacy alias
+  const hasKey = enabled;
+
+  return { enabled, hasKey, hasOpenAI, hasClaude, provider, parseTripViaGPT };
+})();
+
+// ---------- pinterest: OAuth 2.0 PKCE + boards/pins fetch ----------
+const pinterest = (() => {
+  const AUTHORIZE_URL = 'https://www.pinterest.com/oauth/';
+  const TOKEN_URL    = 'https://api.pinterest.com/v5/oauth/token';
+  const API_BASE     = 'https://api.pinterest.com/v5';
+  const SCOPE        = 'boards:read,pins:read';
+
+  const redirectUri = () => window.location.origin + window.location.pathname;
+
+  const hasClientId  = () => !!store.pinterest.clientId.get();
+  const isConnected  = () => !!store.pinterest.token.get();
+
+  // PKCE helpers
+  const base64UrlEncode = (bytes) => {
+    let str = '';
+    for (const b of bytes) str += String.fromCharCode(b);
+    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
+  const randomVerifier = () => {
+    const arr = new Uint8Array(48);
+    crypto.getRandomValues(arr);
+    return base64UrlEncode(arr);
+  };
+  const sha256Base64Url = async (input) => {
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+    return base64UrlEncode(new Uint8Array(hash));
+  };
+
+  const connect = async () => {
+    const clientId = store.pinterest.clientId.get();
+    if (!clientId) throw new Error('Enter a Pinterest App ID first.');
+    const verifier = randomVerifier();
+    const challenge = await sha256Base64Url(verifier);
+    sessionStorage.setItem('malem.pinterest.verifier', verifier);
+    const state = 'malem-' + randomVerifier().slice(0, 8);
+    sessionStorage.setItem('malem.pinterest.state', state);
+    const url = AUTHORIZE_URL +
+      '?response_type=code' +
+      '&client_id=' + encodeURIComponent(clientId) +
+      '&redirect_uri=' + encodeURIComponent(redirectUri()) +
+      '&scope=' + encodeURIComponent(SCOPE) +
+      '&code_challenge=' + challenge +
+      '&code_challenge_method=S256' +
+      '&state=' + encodeURIComponent(state);
+    window.location.href = url;
+  };
+
+  // Called on page load: if the URL contains ?code=...&state=..., exchange the code.
+  const handleCallbackIfPresent = async () => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (!code) return { handled: false };
+    const savedState = sessionStorage.getItem('malem.pinterest.state');
+    const verifier   = sessionStorage.getItem('malem.pinterest.verifier');
+    // Strip params from URL to keep it clean.
+    const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
+    window.history.replaceState(null, '', cleanUrl);
+    if (!verifier || state !== savedState) return { handled: true, error: 'OAuth state mismatch — try again.' };
+
+    try {
+      const res = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: redirectUri(),
+          code_verifier: verifier,
+          client_id: store.pinterest.clientId.get(),
+        }).toString(),
+      });
+      if (!res.ok) throw new Error(`Pinterest token HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.access_token) throw new Error('No access_token in response');
+      store.pinterest.token.set(data.access_token);
+      sessionStorage.removeItem('malem.pinterest.verifier');
+      sessionStorage.removeItem('malem.pinterest.state');
+      return { handled: true, ok: true };
+    } catch (err) {
+      return { handled: true, error: err.message || 'Token exchange failed' };
+    }
+  };
+
+  const disconnect = () => {
+    store.pinterest.token.set('');
+    store.pinterest.board.set('');
+    store.pinterest.user.set(null);
+  };
+
+  const apiGET = async (path) => {
+    const token = store.pinterest.token.get();
+    if (!token) throw new Error('Not connected to Pinterest.');
+    const res = await fetch(API_BASE + path, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Pinterest API ${res.status}`);
+    return res.json();
+  };
+
+  const fetchUser   = async () => apiGET('/user_account');
+  const fetchBoards = async () => (await apiGET('/boards')).items || [];
+  const fetchPins   = async (boardId) => (await apiGET(`/boards/${encodeURIComponent(boardId)}/pins`)).items || [];
+
+  // Extract a usable image URL from a Pinterest pin object.
+  const pinImageURL = (pin) => {
+    const m = pin?.media?.images;
+    if (!m) return null;
+    return m['400x300']?.url || m['600x']?.url || m['1200x']?.url || m['originals']?.url || null;
+  };
+
+  // Fetch + cache pins for the active board (memoized for the tab lifetime).
+  let _pinsCache = { boardId: null, promise: null };
+  const currentBoardPins = () => {
+    const boardId = store.pinterest.board.get();
+    if (!boardId || !isConnected()) return Promise.resolve([]);
+    if (_pinsCache.boardId === boardId && _pinsCache.promise) return _pinsCache.promise;
+    _pinsCache = { boardId, promise: fetchPins(boardId).then(items => items.map(pinImageURL).filter(Boolean)) };
+    return _pinsCache.promise;
+  };
+  const clearPinsCache = () => { _pinsCache = { boardId: null, promise: null }; };
+
+  return { redirectUri, hasClientId, isConnected, connect, handleCallbackIfPresent, disconnect, fetchUser, fetchBoards, fetchPins, currentBoardPins, clearPinsCache };
 })();
 
 // ---------- engine ----------
@@ -1146,8 +1345,10 @@ const ui = (() => {
 
   const updateChatHint = () => {
     const el = $('#chat-hint');
-    if (ai.enabled()) el.innerHTML = 'Powered by GPT (<a href="#" id="chat-settings-link-2">change</a>).';
-    else              el.innerHTML = 'Powered by a local parser. <a href="#" id="chat-settings-link-2">Add your OpenAI key</a> to switch to GPT.';
+    const p = ai.provider();
+    if (p === 'claude')      el.innerHTML = 'Powered by Claude (<a href="#" id="chat-settings-link-2">change</a>).';
+    else if (p === 'openai') el.innerHTML = 'Powered by GPT (<a href="#" id="chat-settings-link-2">change</a>).';
+    else                     el.innerHTML = 'Powered by a local parser. <a href="#" id="chat-settings-link-2">Add an OpenAI or Claude key</a> to switch to AI.';
     const l = $('#chat-settings-link-2'); if (l) l.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
   };
 
@@ -1338,24 +1539,91 @@ const ui = (() => {
     };
   };
 
-  // ---- Settings sheet ----
+  // ---- Settings sheet (connected accounts) ----
+  const refreshConnectionStatuses = () => {
+    const setStatus = (id, connected) => {
+      const el = $('#conn-status-' + id); if (!el) return;
+      el.textContent = connected ? 'Connected' : 'Not connected';
+      el.closest('.conn-tile')?.setAttribute('data-connected', String(connected));
+    };
+    setStatus('openai',    ai.hasOpenAI());
+    setStatus('anthropic', ai.hasClaude());
+    setStatus('pinterest', pinterest.isConnected());
+    $('#btn-pinterest-disconnect').hidden = !pinterest.isConnected();
+  };
+
   const openSettings = () => {
     const f = $('#settings-form');
-    f.openaiKey.value = store.ai.getKey();
-    f.openaiModel.value = store.ai.getModel();
+    f.openaiKey.value    = store.ai.openaiKey.get();
+    f.openaiModel.value  = store.ai.openaiModel.get();
+    f.anthropicKey.value = store.ai.claudeKey.get();
+    f.anthropicModel.value = store.ai.claudeModel.get();
+    const prov = store.ai.provider.get();
+    const provRadio = $(`input[name="aiProvider"][value="${prov}"]`);
+    if (provRadio) provRadio.checked = true;
+
+    f.pinterestClientId.value = store.pinterest.clientId.get();
+    $('#pinterest-redirect-uri').textContent = pinterest.redirectUri();
+
+    // Board selector if connected
+    const boardsWrap = $('#pinterest-boards-wrap');
+    if (pinterest.isConnected()) {
+      boardsWrap.hidden = false;
+      const boardSel = $('#pinterest-board-select');
+      boardSel.innerHTML = `<option>Loading…</option>`;
+      pinterest.fetchBoards()
+        .then(boards => {
+          if (!boards.length) {
+            boardSel.innerHTML = `<option value="">No boards found on this account.</option>`;
+            return;
+          }
+          const cur = store.pinterest.board.get();
+          boardSel.innerHTML = boards.map(b =>
+            `<option value="${escapeHtml(b.id)}"${b.id === cur ? ' selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
+        })
+        .catch(err => { boardSel.innerHTML = `<option value="">Could not load boards</option>`; console.warn(err); });
+      const u = store.pinterest.user.get();
+      $('#pinterest-user-note').textContent = u?.username ? `Connected as @${u.username}` : 'Connected.';
+    } else {
+      boardsWrap.hidden = true;
+      $('#pinterest-user-note').textContent = '';
+    }
+
+    refreshConnectionStatuses();
+
     $('#sheet-settings').hidden = false;
     const close = () => $('#sheet-settings').hidden = true;
     $$('#sheet-settings [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
+
     $('#save-settings').onclick = () => {
-      store.ai.setKey(f.openaiKey.value.trim());
-      store.ai.setModel(f.openaiModel.value);
-      flash('#settings-note', ai.hasKey() ? 'Saved. GPT active.' : 'Saved. Local parser will be used.');
+      store.ai.openaiKey.set(f.openaiKey.value.trim());
+      store.ai.openaiModel.set(f.openaiModel.value);
+      store.ai.claudeKey.set(f.anthropicKey.value.trim());
+      store.ai.claudeModel.set(f.anthropicModel.value);
+      const prov = ($('input[name="aiProvider"]:checked') || {}).value || 'auto';
+      store.ai.provider.set(prov);
+      store.pinterest.clientId.set(f.pinterestClientId.value.trim());
+      // Board choice, if any
+      const boardSel = $('#pinterest-board-select');
+      if (boardSel && boardSel.value) {
+        store.pinterest.board.set(boardSel.value);
+        pinterest.clearPinsCache();
+      }
+      refreshConnectionStatuses();
+      const p = ai.provider();
+      flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.') + (pinterest.isConnected() ? ' Pinterest connected.' : ''));
       updateChatHint();
     };
-    $('#clear-settings').onclick = () => {
-      store.ai.setKey(''); f.openaiKey.value = '';
-      flash('#settings-note', 'Cleared. Local parser will be used.');
-      updateChatHint();
+
+    $('#btn-pinterest-connect').onclick = async () => {
+      store.pinterest.clientId.set(f.pinterestClientId.value.trim());
+      try { await pinterest.connect(); } catch (err) { flash('#pinterest-note', err.message || 'Could not start Pinterest.'); }
+    };
+    $('#btn-pinterest-disconnect').onclick = () => {
+      pinterest.disconnect();
+      refreshConnectionStatuses();
+      $('#pinterest-boards-wrap').hidden = true;
+      flash('#pinterest-note', 'Disconnected.');
     };
   };
 
@@ -1445,11 +1713,25 @@ const ui = (() => {
       </article>`).join('');
   };
 
-  const renderOutfits = () => {
+  const renderOutfits = async () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
     const itin = engine.buildItinerary(trip, profile);
     const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
+
+    // If Pinterest is connected + a board is selected, swap the Unsplash URLs
+    // for real pins from the user's board (cycled so every pin has a photo).
+    if (pinterest.isConnected() && store.pinterest.board.get()) {
+      try {
+        const boardPinURLs = await pinterest.currentBoardPins();
+        if (boardPinURLs && boardPinURLs.length) {
+          pins.forEach((p, i) => { p.img = boardPinURLs[i % boardPinURLs.length]; });
+          $('#outfits-source').textContent = 'Imagery: pins from your connected Pinterest board.';
+        }
+      } catch (err) { console.warn('Pinterest fetch failed', err); }
+    } else {
+      $('#outfits-source').textContent = 'Imagery: Unsplash by keyword. Connect Pinterest in Settings to use your own board.';
+    }
     const byDay = {};
     pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
     const root = $('#outfits-output');
@@ -1692,8 +1974,21 @@ const ui = (() => {
   };
 
   return {
-    boot: () => {
+    boot: async () => {
       applyTheme();
+      // Handle a Pinterest OAuth redirect before anything else.
+      const cb = await pinterest.handleCallbackIfPresent();
+      if (cb.handled && cb.ok) {
+        // Fetch user info + first board to seed defaults
+        try {
+          const u = await pinterest.fetchUser();
+          store.pinterest.user.set({ username: u.username });
+          const boards = await pinterest.fetchBoards();
+          if (boards.length && !store.pinterest.board.get()) {
+            store.pinterest.board.set(boards[0].id);
+          }
+        } catch { /* ignore */ }
+      }
       initAuth();
       initChat();
       initPublic();
@@ -1701,6 +1996,8 @@ const ui = (() => {
       autosizeTextarea();
       window.addEventListener('hashchange', route);
       route();
+      // If OAuth just happened, open settings so the user can pick a board.
+      if (cb.handled && cb.ok) openSettings();
     },
   };
 })();

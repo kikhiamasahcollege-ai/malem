@@ -634,28 +634,31 @@
   </div>
 </aside>
 
-<!-- 5. SETTINGS SHEET -->
+<!-- 5. SETTINGS / CONNECTED ACCOUNTS SHEET -->
 <aside class="sheet" id="sheet-settings" hidden>
   <div class="backdrop" data-close-sheet></div>
   <div class="sheet-panel">
     <div class="sheet-head">
       <div>
-        <span class="eyebrow">Settings</span>
-        <h2>API and preferences.</h2>
+        <span class="eyebrow">Connected accounts</span>
+        <h2>Link the tools that make malem smarter.</h2>
       </div>
       <button type="button" class="close-x" data-close-sheet aria-label="Close">Close</button>
     </div>
+    <p class="hint">Everything is stored in this browser only. Keys and tokens never leave your device except to talk directly to each provider.</p>
 
-    <form id="settings-form" class="stack" style="margin-top:1rem;">
-      <fieldset class="fieldset">
-        <legend>OpenAI API key</legend>
-        <p class="hint" style="margin-bottom:.6rem;">
-          Optional. If provided, malem uses GPT to parse your chat prompts.
-          Stored in this browser only; the key never leaves your device
-          except to call OpenAI directly.
-        </p>
+    <form id="settings-form" class="stack" style="margin-top:1.25rem;">
+
+      <!-- Connection: OpenAI -->
+      <fieldset class="conn-tile" data-conn="openai">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">◐</span>
+          <span>OpenAI (GPT)</span>
+          <span class="conn-status" id="conn-status-openai">Not connected</span>
+        </legend>
+        <p class="hint">Uses your GPT key to parse chat prompts into a trip.</p>
         <label class="field">
-          <span>sk-… key</span>
+          <span>API key</span>
           <input type="password" name="openaiKey" placeholder="sk-…" autocomplete="off" />
         </label>
         <label class="field">
@@ -667,9 +670,79 @@
         </label>
       </fieldset>
 
+      <!-- Connection: Claude -->
+      <fieldset class="conn-tile" data-conn="anthropic">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">✱</span>
+          <span>Anthropic (Claude)</span>
+          <span class="conn-status" id="conn-status-anthropic">Not connected</span>
+        </legend>
+        <p class="hint">Alternative chat model. Same shape as OpenAI.</p>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" name="anthropicKey" placeholder="sk-ant-…" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <select name="anthropicModel">
+            <option value="claude-3-5-haiku-latest">claude-3-5-haiku (cheap, fast)</option>
+            <option value="claude-3-5-sonnet-latest" selected>claude-3-5-sonnet (higher quality)</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <!-- Preferred AI provider -->
+      <fieldset class="fieldset">
+        <legend>Preferred AI</legend>
+        <div class="radio-row">
+          <label><input type="radio" name="aiProvider" value="auto"   checked /><span>Auto (prefer Claude)</span></label>
+          <label><input type="radio" name="aiProvider" value="openai" /><span>OpenAI</span></label>
+          <label><input type="radio" name="aiProvider" value="claude" /><span>Claude</span></label>
+        </div>
+      </fieldset>
+
+      <!-- Connection: Pinterest -->
+      <fieldset class="conn-tile" data-conn="pinterest">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">◉</span>
+          <span>Pinterest</span>
+          <span class="conn-status" id="conn-status-pinterest">Not connected</span>
+        </legend>
+        <p class="hint">Pull outfit inspiration from a board you actually curate.</p>
+
+        <details class="setup-help">
+          <summary>One-time setup — register a Pinterest developer app</summary>
+          <ol>
+            <li>Go to <a href="https://developers.pinterest.com/apps/" target="_blank" rel="noopener">developers.pinterest.com/apps</a> and sign in.</li>
+            <li>Create an app. Under <em>Redirect URIs</em>, add this site's URL exactly:
+              <code class="callout" id="pinterest-redirect-uri">—</code>
+            </li>
+            <li>Copy the <strong>App ID</strong> and paste it below.</li>
+          </ol>
+        </details>
+
+        <label class="field">
+          <span>App ID (client ID)</span>
+          <input type="text" name="pinterestClientId" placeholder="1234567" autocomplete="off" />
+        </label>
+
+        <div class="conn-actions">
+          <button type="button" class="btn primary" id="btn-pinterest-connect">Connect Pinterest →</button>
+          <button type="button" class="btn ghost"   id="btn-pinterest-disconnect" hidden>Disconnect</button>
+          <span class="save-note" id="pinterest-note" aria-live="polite"></span>
+        </div>
+
+        <div id="pinterest-boards-wrap" hidden style="margin-top:.75rem;">
+          <label class="field">
+            <span>Use this board for outfit inspiration</span>
+            <select id="pinterest-board-select" name="pinterestBoard"></select>
+          </label>
+          <p class="hint" id="pinterest-user-note"></p>
+        </div>
+      </fieldset>
+
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="save-settings">Save</button>
-        <button type="button" class="btn ghost"   id="clear-settings">Clear key</button>
         <span class="save-note" id="settings-note" aria-live="polite"></span>
       </div>
     </form>
