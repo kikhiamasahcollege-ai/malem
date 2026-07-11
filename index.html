@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>malem — a travel companion that understands you</title>
+<meta name="description" content="Personal travel profile and choose-your-vibe itineraries. Website first, mobile app next." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%88%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◐</span>
+    <span class="wordmark">malem</span>
+    <span class="tagline">a travel companion that understands you</span>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" role="tab" data-tab="home"    aria-selected="true">Home</button>
+    <button class="tab" role="tab" data-tab="profile" aria-selected="false">Profile</button>
+    <button class="tab" role="tab" data-tab="vibes"   aria-selected="false">Choose your vibe</button>
+    <button class="tab" role="tab" data-tab="soon"    aria-selected="false">Coming soon</button>
+  </nav>
+</header>
+
+<main>
+
+<section class="panel" data-panel="home">
+  <div class="hero">
+    <h1>Travel that fits <em>you</em>, not the algorithm's idea of you.</h1>
+    <p class="lede">
+      Tell malem what you actually care about — pace, budget, food, faith,
+      family, accessibility, and what to avoid. Then pick a <strong>vibe</strong>
+      and get an itinerary that respects all of it. Every preference is a
+      control you set, not an assumption we make.
+    </p>
+    <div class="cta-row">
+      <button class="btn primary" data-goto="profile">Set up your profile</button>
+      <button class="btn ghost"   data-goto="vibes">Try a vibe itinerary</button>
+    </div>
+  </div>
+
+  <div class="grid features">
+    <article><h3>1. Personal profile</h3><p>Vibes, budget, pace, dietary, accessibility, religious &amp; cultural, modesty, medical, family, and places to avoid — all editable.</p></article>
+    <article><h3>2. Vibe itineraries</h3><p>Live Like a Local, Iconic First Visit, Hidden Gems, Halal Food &amp; Culture, and more. Pick one, blend two, or slide the vibe.</p></article>
+    <article><h3>3. Packing planner</h3><p>Forecast, activities, laundry, luggage, medication, faith attire, adapters — split into pack, buy, rent, and do-not-pack.</p></article>
+    <article><h3>4. Discover Now</h3><p>Three hours, light rain at six, twelve minutes from a covered market — here are three plans.</p></article>
+    <article><h3>5. Local discovery</h3><p>Small businesses, neighborhood favorites, seasonal events. "Hidden gem" judged by locals, not just popularity.</p></article>
+    <article><h3>6. What to Expect</h3><p>Etiquette, tipping, prayer facilities, transit norms, common scams. Dated, sourced, and labeled by confidence.</p></article>
+    <article><h3>7. Group &amp; journal</h3><p>Collaborators vote on vibes; each traveler gets their own packing list. Publish what you actually did.</p></article>
+  </div>
+</section>
+
+<section class="panel" data-panel="profile" hidden>
+  <div class="section-head">
+    <h2>Your travel profile</h2>
+    <p class="lede">Nothing is inferred. Every field is yours to set, change, or leave blank.</p>
+  </div>
+
+  <form id="profile-form" class="stack" autocomplete="off">
+
+    <fieldset class="card">
+      <legend>Travel vibes</legend>
+      <p class="hint">Multi-select. Weight the trip toward the ones you check.</p>
+      <div class="chips" data-chips="vibes">
+        <label><input type="checkbox" value="relaxed" /><span>Relaxed</span></label>
+        <label><input type="checkbox" value="adventurous" /><span>Adventurous</span></label>
+        <label><input type="checkbox" value="romantic" /><span>Romantic</span></label>
+        <label><input type="checkbox" value="luxury" /><span>Luxury</span></label>
+        <label><input type="checkbox" value="local" /><span>Live like a local</span></label>
+        <label><input type="checkbox" value="family-friendly" /><span>Family-friendly</span></label>
+        <label><input type="checkbox" value="spiritual" /><span>Spiritual</span></label>
+        <label><input type="checkbox" value="nightlife" /><span>Nightlife</span></label>
+        <label><input type="checkbox" value="nature" /><span>Nature</span></label>
+        <label><input type="checkbox" value="food-focused" /><span>Food-focused</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card two-col">
+      <legend>Budget &amp; pace</legend>
+      <label class="field">
+        <span>Budget</span>
+        <select name="budget">
+          <option value="shoestring">Shoestring</option>
+          <option value="mid" selected>Mid-range</option>
+          <option value="comfort">Comfort</option>
+          <option value="luxury">Luxury</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Preferred pace</span>
+        <select name="pace">
+          <option value="slow">Slow — one or two things a day</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="packed">Packed — see as much as possible</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Dietary</legend>
+      <div class="chips" data-chips="dietary-flags">
+        <label><input type="checkbox" data-diet="halal" /><span>Halal</span></label>
+        <label><input type="checkbox" data-diet="kosher" /><span>Kosher</span></label>
+        <label><input type="checkbox" data-diet="vegan" /><span>Vegan</span></label>
+        <label><input type="checkbox" data-diet="vegetarian" /><span>Vegetarian</span></label>
+        <label><input type="checkbox" data-diet="glutenFree" /><span>Gluten-free</span></label>
+      </div>
+      <label class="field">
+        <span>Allergies (comma-separated)</span>
+        <input type="text" name="allergies" placeholder="peanuts, shellfish" />
+      </label>
+      <label class="field">
+        <span>Other dietary notes</span>
+        <input type="text" name="dietOther" placeholder="no pork, low-sodium…" />
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Accessibility</legend>
+      <div class="chips" data-chips="access-flags">
+        <label><input type="checkbox" data-access="stepFree" /><span>Step-free routes</span></label>
+        <label><input type="checkbox" data-access="lowVision" /><span>Low-vision support</span></label>
+        <label><input type="checkbox" data-access="lowHearing" /><span>Low-hearing support</span></label>
+        <label><input type="checkbox" data-access="seatingBreaks" /><span>Frequent seating breaks</span></label>
+      </div>
+      <label class="field">
+        <span>Notes for planners</span>
+        <input type="text" name="accessNotes" placeholder="powered wheelchair, service animal…" />
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Religious &amp; cultural considerations</legend>
+      <p class="hint">Free text. malem will only use what you write here.</p>
+      <textarea name="religiousCultural" rows="3" placeholder="prayer times, Shabbat, fasting periods, cultural observances…"></textarea>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Modesty preferences</legend>
+      <p class="hint">For your own clothing and for suggested activities.</p>
+      <div class="radio-row">
+        <label><input type="radio" name="modesty" value="no-preference" checked /><span>No preference</span></label>
+        <label><input type="radio" name="modesty" value="modest" /><span>Modest</span></label>
+        <label><input type="radio" name="modesty" value="conservative" /><span>Conservative</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Medical &amp; medications</legend>
+      <label class="field">
+        <span>Devices &amp; equipment</span>
+        <input type="text" name="medDevices" placeholder="CPAP, insulin pump…" />
+      </label>
+      <label class="field">
+        <span>Medications</span>
+        <input type="text" name="medMedications" placeholder="what needs refrigeration, refill windows…" />
+      </label>
+      <label class="field">
+        <span>Reminder cadence</span>
+        <select name="medCadence">
+          <option value="none">None</option>
+          <option value="daily">Daily</option>
+          <option value="twice-daily">Twice daily</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Family &amp; children</legend>
+      <label class="field">
+        <span>Children's ages (comma-separated)</span>
+        <input type="text" name="childrenAges" placeholder="4, 8" />
+      </label>
+      <label class="field">
+        <label class="inline-check"><input type="checkbox" name="babyOnBoard" /> <span>Traveling with a baby</span></label>
+      </label>
+      <label class="field">
+        <span>Family notes</span>
+        <input type="text" name="familyNotes" placeholder="nap schedule, dietary variations…" />
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Places or activities to avoid</legend>
+      <label class="field">
+        <span>Comma-separated tags</span>
+        <input type="text" name="avoid" placeholder="crowded clubs, extreme heights, seafood markets" />
+      </label>
+    </fieldset>
+
+    <div class="sticky-actions">
+      <button type="button" class="btn primary" id="save-profile">Save profile</button>
+      <button type="button" class="btn ghost"   id="reset-profile">Reset</button>
+      <span class="save-note" id="save-note" aria-live="polite"></span>
+    </div>
+  </form>
+</section>
+
+<section class="panel" data-panel="vibes" hidden>
+  <div class="section-head">
+    <h2>Choose your vibe</h2>
+    <p class="lede">
+      Pick one vibe, or blend two. Your profile is applied on top — so a
+      halal-food traveler asking for "Live like a local" gets a local
+      itinerary with halal-friendly stops, not a generic one.
+    </p>
+  </div>
+
+  <form id="vibe-form" class="stack">
+    <fieldset class="card two-col">
+      <legend>Trip basics</legend>
+      <label class="field">
+        <span>Destination</span>
+        <input type="text" name="destination" placeholder="e.g., Istanbul" required />
+      </label>
+      <label class="field">
+        <span>Days</span>
+        <input type="number" name="days" min="1" max="21" value="3" required />
+      </label>
+      <label class="field">
+        <span>Travelers</span>
+        <input type="number" name="travelers" min="1" max="12" value="2" />
+      </label>
+      <label class="field">
+        <span>Arrival date (optional)</span>
+        <input type="date" name="arrivalDate" />
+      </label>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Primary vibe</legend>
+      <div class="vibe-grid" data-vibe-grid="primary">
+        <!-- populated by JS from a single source of truth -->
+      </div>
+    </fieldset>
+
+    <fieldset class="card">
+      <legend>Blend a second vibe? <span class="hint inline">Optional.</span></legend>
+      <div class="vibe-grid small" data-vibe-grid="secondary"></div>
+      <label class="field" id="blend-slider-wrap" hidden>
+        <span>Blend ratio — <output id="blend-output">50 / 50</output></span>
+        <input type="range" name="blendRatio" min="0" max="100" value="50" />
+      </label>
+    </fieldset>
+
+    <div class="sticky-actions">
+      <button type="button" class="btn primary" id="build-itinerary">Build itinerary</button>
+      <span class="save-note" id="build-note" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="itinerary-output" hidden></section>
+</section>
+
+<section class="panel" data-panel="soon" hidden>
+  <div class="section-head">
+    <h2>Coming soon</h2>
+    <p class="lede">
+      These features are in the vision doc and next up on the roadmap.
+      This scaffold focuses on the profile and vibe itineraries first.
+    </p>
+  </div>
+  <div class="grid features">
+    <article><h3>Packing planner</h3><p>Forecast + activities + luggage + medication → what to pack, buy, rent, and skip. Escalating reminders.</p></article>
+    <article><h3>Discover Now</h3><p>Right now, right here, right weather, right budget. Mini-itineraries, not a list of businesses.</p></article>
+    <article><h3>Local discovery</h3><p>Balanced sourcing — icons, neighborhood favorites, small businesses, seasonal events, resident-verified.</p></article>
+    <article><h3>What to Expect</h3><p>Practical prep per destination: etiquette, tipping, transit, scams, prayer facilities, accessibility realities.</p></article>
+    <article><h3>Group planning</h3><p>Shared trip, individual packing lists, vibe voting, restrictions respected per traveler.</p></article>
+    <article><h3>Trip journals</h3><p>What you actually did, what to change, accessibility/dietary accuracy, outfit inspiration.</p></article>
+  </div>
+  <p class="lede">See <a href="./docs/vision.md">docs/vision.md</a> for the full spec.</p>
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>malem — website first, mobile app next.</span>
+  <span><a href="./docs/vision.md">Vision</a> · <a href="./docs/data-model.md">Data model</a></span>
+</footer>
+
+<script src="./app.js"></script>
+</body>
+</html>

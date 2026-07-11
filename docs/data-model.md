@@ -1,0 +1,104 @@
+# Data model
+
+Framework-agnostic shape of user data. Same object serves the website today
+and the mobile app later — only the persistence layer changes (localStorage →
+server API).
+
+## `TravelProfile`
+
+```ts
+type TravelProfile = {
+  version: number;              // schema version, bump on breaking change
+  vibes: VibeKey[];             // multi-select, user-controlled
+  budget: 'shoestring' | 'mid' | 'comfort' | 'luxury';
+  pace:   'slow'       | 'balanced' | 'packed';
+  dietary: {
+    halal: boolean;
+    kosher: boolean;
+    vegan: boolean;
+    vegetarian: boolean;
+    glutenFree: boolean;
+    allergies: string[];        // free text
+    other: string;              // free text
+  };
+  accessibility: {
+    stepFree: boolean;
+    lowVision: boolean;
+    lowHearing: boolean;
+    seatingBreaks: boolean;
+    notes: string;
+  };
+  religiousCultural: string;    // free text, user-authored only
+  modesty: 'no-preference' | 'modest' | 'conservative';
+  medical: {
+    devices: string;
+    medications: string;
+    reminderCadence: 'none' | 'daily' | 'twice-daily';
+  };
+  family: {
+    childrenAges: number[];
+    babyOnBoard: boolean;
+    notes: string;
+  };
+  avoid: string[];              // free-text tags: places, environments, activities
+};
+
+type VibeKey =
+  | 'relaxed' | 'adventurous' | 'romantic' | 'luxury' | 'local'
+  | 'family-friendly' | 'spiritual' | 'nightlife' | 'nature' | 'food-focused';
+```
+
+## `ItineraryRequest`
+
+```ts
+type ItineraryRequest = {
+  destination: string;
+  days: number;
+  primaryVibe: TripVibe;
+  secondaryVibe?: TripVibe;     // optional blend
+  blendRatio?: number;          // 0..1 weight on secondary
+  arrivalDate?: string;         // ISO
+  travelers: number;
+};
+
+type TripVibe =
+  | 'live-like-local' | 'iconic-first-visit' | 'relaxed-scenic'
+  | 'hidden-gems' | 'family-adventure' | 'halal-food-culture'
+  | 'luxury-without-rush';
+```
+
+## `Itinerary`
+
+```ts
+type Itinerary = {
+  request: ItineraryRequest;
+  respectedFromProfile: string[];  // human-readable list shown at top
+  days: ItineraryDay[];
+};
+
+type ItineraryDay = {
+  date?: string;
+  theme: string;
+  blocks: ItineraryBlock[];
+};
+
+type ItineraryBlock = {
+  time: string;                 // e.g., "09:30"
+  title: string;
+  duration: string;             // e.g., "90 min"
+  kind: 'meal' | 'sight' | 'activity' | 'rest' | 'transit' | 'shopping';
+  notes?: string;
+  respects?: string[];          // which profile fields this block honored
+};
+```
+
+## Storage
+
+Phase 1 (website): `localStorage` under `malem.profile.v1` and
+`malem.itinerary.last.v1`.
+
+Phase 2 (accounts): identical objects sent to a `/profile` and `/itineraries`
+REST or GraphQL endpoint. Client code stays the same; swap the `store` module.
+
+Phase 3 (mobile app): same object shapes. Only the store implementation
+changes to AsyncStorage / secure enclave / server API.
