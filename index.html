@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>malem — travel that understands you</title>
-<meta name="description" content="Sign in, tell malem where you're going, and get an itinerary, outfits, packing, and cultural prep — one thing per page, shaped by who you are." />
+<meta name="description" content="Tell malem where you're heading. It plans the trip — itinerary, outfits, packing, and cultural prep — shaped by who you are." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -19,7 +19,7 @@
       <span class="tag" id="auth-tag">Sign in</span>
     </div>
     <h1 id="auth-title">Welcome back.</h1>
-    <p class="lede" id="auth-lede">Sign in to pick up your next trip.</p>
+    <p class="lede" id="auth-lede">Sign in and tell malem where you're heading.</p>
 
     <div class="stack">
       <label class="field" id="name-field" hidden>
@@ -107,60 +107,8 @@
   </main>
 </section>
 
-<!-- 2. TRIP SETUP -->
-<section class="gate setup" id="screen-setup" hidden>
-  <form class="gate-card" id="setup-form" autocomplete="off">
-    <div class="brand">
-      <span class="dot" aria-hidden="true"></span>
-      <span>malem</span>
-      <span class="tag" id="setup-hi">Hello</span>
-    </div>
-
-    <span class="eyebrow">Where next</span>
-    <h1 id="setup-title">Tell us where<br />you're going.</h1>
-    <p class="lede">Everything else — itinerary, outfits, packing, cultural prep — builds from that.</p>
-
-    <div class="stack">
-      <div class="two-col">
-        <label class="field">
-          <span>Destination</span>
-          <select name="destination" data-destinations required></select>
-        </label>
-        <label class="field">
-          <span>Arrival</span>
-          <input type="date" name="arrivalDate" />
-        </label>
-        <label class="field">
-          <span>Days</span>
-          <input type="number" name="days" min="1" max="21" value="4" required />
-        </label>
-        <label class="field">
-          <span>Travelers</span>
-          <input type="number" name="travelers" min="1" max="12" value="2" required />
-        </label>
-      </div>
-
-      <div>
-        <span class="eyebrow" style="display:block;margin-bottom:.5rem;">Vibe</span>
-        <p class="hint" id="vibe-hint">Pick one. Suggestion is drawn from your saved profile.</p>
-        <div class="vibe-grid" id="setup-vibes"></div>
-      </div>
-    </div>
-
-    <div class="form-actions">
-      <button type="button" class="btn ghost" id="setup-edit-profile">Edit profile</button>
-      <button type="submit" class="btn primary">Generate trip</button>
-    </div>
-    <p class="save-note" id="setup-note" aria-live="polite"></p>
-
-    <p class="auth-switch">
-      <a href="#" id="setup-signout">Sign out</a>
-    </p>
-  </form>
-</section>
-
-<!-- 3. DASHBOARD (sidebar + one page at a time) -->
-<div id="screen-dash" class="dash" hidden>
+<!-- 2. APP SHELL — sidebar + chat OR trip dashboard -->
+<div id="screen-app" class="dash" hidden>
   <button class="side-toggle" id="side-toggle" aria-label="Toggle navigation">Menu</button>
 
   <aside class="sidebar">
@@ -169,7 +117,17 @@
       <span>malem</span>
     </div>
 
-    <nav class="side-nav" aria-label="Sections">
+    <button type="button" class="new-trip-btn" id="btn-new-trip">
+      <span aria-hidden="true">＋</span> New trip
+    </button>
+
+    <div class="side-section">
+      <span class="side-label">Recent trips</span>
+      <ul class="trip-history" id="trip-history"></ul>
+    </div>
+
+    <nav class="side-nav" id="trip-side-nav" aria-label="Active trip sections" hidden>
+      <span class="side-label" style="margin-top:1rem;">This trip</span>
       <a href="#/itinerary" data-route="itinerary">Itinerary</a>
       <a href="#/outfits"   data-route="outfits">Outfit inspiration</a>
       <a href="#/packing"   data-route="packing">Packing guide</a>
@@ -177,27 +135,48 @@
       <a href="#/discover"  data-route="discover">Discover now</a>
       <a href="#/local"     data-route="local">Local</a>
       <a href="#/group"     data-route="group">Group &amp; journal</a>
-      <a href="#/community" data-route="community">Community</a>
     </nav>
 
     <div class="side-context">
       <div class="who" id="who-name">—</div>
-      <div class="trip">
-        <span id="trip-dest">—</span><br />
-        <span id="trip-meta">—</span>
-      </div>
       <div class="actions">
-        <button type="button" id="btn-change-trip">Change trip</button>
+        <button type="button" id="btn-community">Community</button>
         <button type="button" id="btn-profile">Profile</button>
+        <button type="button" id="btn-settings">Settings</button>
         <button type="button" id="btn-theme">Theme</button>
         <button type="button" id="btn-signout">Sign out</button>
       </div>
     </div>
   </aside>
 
-  <main class="content">
+  <main class="content" id="app-content">
+    <!-- CHAT LANDING (default new-trip view) -->
+    <section class="page" data-page="chat">
+      <div class="chat-hero">
+        <span class="eyebrow">malem</span>
+        <h1 id="chat-greeting">Where are you heading?</h1>
+        <p class="kicker">Tell me the trip in your own words — where, when, how many days, who's with you, anything to know. I'll do the rest.</p>
+      </div>
+
+      <div class="chat-log" id="chat-log"></div>
+
+      <div class="chat-suggestions" id="chat-suggestions">
+        <button class="chip" data-prompt="Going to Istanbul for 5 days in June, halal food, my mom uses a wheelchair, we love markets and mosques">"Istanbul in June, halal, wheelchair, love markets"</button>
+        <button class="chip" data-prompt="3 days in Kyoto with my partner — quiet mornings, food-focused, no early wake-ups">"3 days in Kyoto, quiet, food-focused"</button>
+        <button class="chip" data-prompt="Paris solo weekend, love pastry, vegan, medium budget">"Paris solo weekend, vegan pastry"</button>
+        <button class="chip" data-prompt="Marrakech for a week with kids ages 4 and 7, modest dress, halal">"Marrakech week with kids, halal, modest"</button>
+        <button class="chip" data-prompt="4 nights in New York with my parents — walking is fine but not much stairs, no dietary restrictions, iconic sights">"4 nights NYC with parents, easy walking"</button>
+      </div>
+
+      <form class="chat-input" id="chat-form" autocomplete="off">
+        <textarea id="chat-textarea" rows="1" placeholder="Where are you heading? Say as much or as little as you like…"></textarea>
+        <button type="submit" class="chat-send" aria-label="Send">↑</button>
+      </form>
+      <p class="chat-hint" id="chat-hint">Powered by a local parser. <a href="#" id="chat-settings-link">Add your OpenAI key</a> to switch to GPT.</p>
+    </section>
+
     <!-- ITINERARY -->
-    <section class="page" data-page="itinerary">
+    <section class="page" data-page="itinerary" hidden>
       <div class="page-head">
         <span class="eyebrow">Your trip · <span id="itin-vibe-label">—</span></span>
         <h1 id="itin-hero">—</h1>
@@ -230,12 +209,10 @@
       <div class="page-head">
         <span class="eyebrow">Outfit inspiration</span>
         <h1>What to wear.</h1>
-        <p class="kicker">A mood board shaped by your itinerary, the weather, and how you like to dress.</p>
+        <p class="kicker" id="outfits-kicker">A mood board pulled from the web based on your trip's vibe, weather, and your style.</p>
       </div>
       <div id="outfits-output"></div>
-      <p class="image-source">
-        Imagery: curated Unsplash editorial. Production will source from your Pinterest boards.
-      </p>
+      <p class="image-source" id="outfits-source">Imagery: Unsplash by keyword (linen, wool, silk, editorial, and your trip's style).</p>
     </section>
 
     <!-- PACKING -->
@@ -248,7 +225,7 @@
 
       <button type="button" class="btn ghost" id="toggle-packing-controls" style="margin-bottom:1rem;">Adjust</button>
       <form id="packing-form" class="pack-controls stack" hidden>
-        <div class="two-col" style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+        <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
           <label class="field">
             <span>Season</span>
             <select name="season">
@@ -507,7 +484,7 @@
   </main>
 </div>
 
-<!-- 4. PROFILE SHEET (slide-over) -->
+<!-- 4. PROFILE SHEET -->
 <aside class="sheet" id="sheet-profile" hidden>
   <div class="backdrop" data-close-sheet></div>
   <div class="sheet-panel">
@@ -580,7 +557,7 @@
       <fieldset class="fieldset">
         <legend>Accessibility</legend>
         <div class="chips" data-chips="access-flags">
-          <label><input type="checkbox" data-access="stepFree" /><span>Step-free routes</span></label>
+          <label><input type="checkbox" data-access="stepFree" /><span>Step-free</span></label>
           <label><input type="checkbox" data-access="lowVision" /><span>Low-vision</span></label>
           <label><input type="checkbox" data-access="lowHearing" /><span>Low-hearing</span></label>
           <label><input type="checkbox" data-access="seatingBreaks" /><span>Frequent seating breaks</span></label>
@@ -593,7 +570,7 @@
 
       <fieldset class="fieldset">
         <legend>Religious &amp; cultural</legend>
-        <textarea name="religiousCultural" rows="3" placeholder="prayer times, Shabbat, fasting periods, cultural observances…"></textarea>
+        <textarea name="religiousCultural" rows="3" placeholder="prayer times, Shabbat, fasting periods…"></textarea>
       </fieldset>
 
       <fieldset class="fieldset">
@@ -644,7 +621,7 @@
         <legend>Avoid</legend>
         <label class="field">
           <span>Places or activities to avoid (comma-separated)</span>
-          <input type="text" name="avoid" placeholder="crowded clubs, extreme heights, seafood markets" />
+          <input type="text" name="avoid" placeholder="crowded clubs, extreme heights…" />
         </label>
       </fieldset>
 
@@ -652,6 +629,48 @@
         <button type="button" class="btn primary" id="save-profile">Save profile</button>
         <button type="button" class="btn ghost"   id="reset-profile">Reset</button>
         <span class="save-note" id="save-note" aria-live="polite"></span>
+      </div>
+    </form>
+  </div>
+</aside>
+
+<!-- 5. SETTINGS SHEET -->
+<aside class="sheet" id="sheet-settings" hidden>
+  <div class="backdrop" data-close-sheet></div>
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <div>
+        <span class="eyebrow">Settings</span>
+        <h2>API and preferences.</h2>
+      </div>
+      <button type="button" class="close-x" data-close-sheet aria-label="Close">Close</button>
+    </div>
+
+    <form id="settings-form" class="stack" style="margin-top:1rem;">
+      <fieldset class="fieldset">
+        <legend>OpenAI API key</legend>
+        <p class="hint" style="margin-bottom:.6rem;">
+          Optional. If provided, malem uses GPT to parse your chat prompts.
+          Stored in this browser only; the key never leaves your device
+          except to call OpenAI directly.
+        </p>
+        <label class="field">
+          <span>sk-… key</span>
+          <input type="password" name="openaiKey" placeholder="sk-…" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <select name="openaiModel">
+            <option value="gpt-4o-mini" selected>gpt-4o-mini (cheap, fast)</option>
+            <option value="gpt-4o">gpt-4o (higher quality)</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="save-settings">Save</button>
+        <button type="button" class="btn ghost"   id="clear-settings">Clear key</button>
+        <span class="save-note" id="settings-note" aria-live="polite"></span>
       </div>
     </form>
   </div>

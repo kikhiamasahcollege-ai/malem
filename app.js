@@ -1,4 +1,4 @@
-/* malem — dependency-free. Modules: store, data, engine, auth, ui. */
+/* malem — dependency-free. Modules: store, data, engine, auth, parser, ai, ui. */
 
 // ---------- store ----------
 const store = (() => {
@@ -6,12 +6,16 @@ const store = (() => {
     session: 'malem.session.v1',
     accounts: 'malem.accounts.v1',
     profile:  (e) => `malem.profile.v1.${e}`,
-    trip:     (e) => `malem.trip.v1.${e}`,
+    trips:    (e) => `malem.trips.v2.${e}`,          // NEW: array of trips
+    activeTrip: (e) => `malem.activeTrip.v1.${e}`,   // NEW: id of active trip
+    legacyTrip: (e) => `malem.trip.v1.${e}`,         // OLD: single trip
     group:    (e) => `malem.group.v1.${e}`,
     journal:  (e) => `malem.journal.v1.${e}`,
     theme:    'malem.theme.v1',
+    openaiKey:    'malem.openaiKey.v1',
+    openaiModel:  'malem.openaiModel.v1',
   };
-  const readJSON = (k, f) => { try { return JSON.parse(localStorage.getItem(k)) ?? f; } catch { return f; } };
+  const readJSON = (k, f) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? f; } catch { return f; } };
 
   const emptyProfile = () => ({
     version: 1,
@@ -25,6 +29,41 @@ const store = (() => {
     avoid: [],
   });
 
+  const nextId = (() => { let n = 0; return () => `t${Date.now()}${(++n).toString(36)}`; })();
+
+  const trips = {
+    load: (e) => readJSON(K.trips(e), []),
+    save: (e, arr) => localStorage.setItem(K.trips(e), JSON.stringify(arr)),
+    add:  (e, trip) => {
+      const arr = readJSON(K.trips(e), []);
+      const t = { id: trip.id || nextId(), createdAt: trip.createdAt || Date.now(), ...trip };
+      arr.push(t); localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      return t;
+    },
+    remove: (e, id) => {
+      const arr = readJSON(K.trips(e), []).filter(t => t.id !== id);
+      localStorage.setItem(K.trips(e), JSON.stringify(arr));
+    },
+  };
+  const activeTrip = {
+    get: (e) => readJSON(K.activeTrip(e), null),
+    set: (e, id) => localStorage.setItem(K.activeTrip(e), JSON.stringify(id)),
+    clear: (e) => localStorage.removeItem(K.activeTrip(e)),
+  };
+  // Migrate legacy single-trip storage into the trips array on first access.
+  const migrate = (email) => {
+    const legacy = readJSON(K.legacyTrip(email), null);
+    if (!legacy) return;
+    const arr = readJSON(K.trips(email), []);
+    if (!arr.length) {
+      const t = { id: nextId(), createdAt: Date.now(), ...legacy };
+      arr.push(t);
+      localStorage.setItem(K.trips(email), JSON.stringify(arr));
+      localStorage.setItem(K.activeTrip(email), JSON.stringify(t.id));
+    }
+    localStorage.removeItem(K.legacyTrip(email));
+  };
+
   return {
     emptyProfile,
     session: { get: () => readJSON(K.session, null), set: (s) => localStorage.setItem(K.session, JSON.stringify(s)), clear: () => localStorage.removeItem(K.session) },
@@ -34,10 +73,16 @@ const store = (() => {
       save: (e, v) => localStorage.setItem(K.profile(e), JSON.stringify(v)),
       clear: (e) => localStorage.removeItem(K.profile(e)),
     },
-    trip:   { load: (e) => readJSON(K.trip(e), null),    save: (e, t) => localStorage.setItem(K.trip(e), JSON.stringify(t)),   clear: (e) => localStorage.removeItem(K.trip(e)) },
-    group:  { load: (e) => readJSON(K.group(e), []),     save: (e, g) => localStorage.setItem(K.group(e), JSON.stringify(g)),  clear: (e) => localStorage.removeItem(K.group(e)) },
-    journal:{ load: (e) => readJSON(K.journal(e), []),   save: (e, j) => localStorage.setItem(K.journal(e), JSON.stringify(j)), clear: (e) => localStorage.removeItem(K.journal(e)) },
+    trips, activeTrip, migrate,
+    group:  { load: (e) => readJSON(K.group(e), []),   save: (e, g) => localStorage.setItem(K.group(e), JSON.stringify(g)),  clear: (e) => localStorage.removeItem(K.group(e)) },
+    journal:{ load: (e) => readJSON(K.journal(e), []), save: (e, j) => localStorage.setItem(K.journal(e), JSON.stringify(j)), clear: (e) => localStorage.removeItem(K.journal(e)) },
     theme:  { get: () => localStorage.getItem(K.theme) || '', set: (t) => t ? localStorage.setItem(K.theme, t) : localStorage.removeItem(K.theme) },
+    ai: {
+      getKey:   () => localStorage.getItem(K.openaiKey) || '',
+      setKey:   (k) => k ? localStorage.setItem(K.openaiKey, k) : localStorage.removeItem(K.openaiKey),
+      getModel: () => localStorage.getItem(K.openaiModel) || 'gpt-4o-mini',
+      setModel: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel),
+    },
   };
 })();
 
@@ -46,7 +91,6 @@ const DATA = (() => {
   const destinations = [
     { key: 'istanbul',  name: 'Istanbul',  country: 'Türkiye',  plug: 'Type C/F',
       culturalNote: 'Muslim-majority; modest dress helps at religious sites; strong tea and coffee culture.',
-      // Curated palette (5 tones)
       palette: ['#B84E2E', '#1F3A5F', '#EEDFAA', '#C89B3C', '#5A2E1B'],
       paletteNote: 'Terracotta rooftops, Bosphorus indigo, cream tiles, honeyed gold, and roasted coffee.' },
     { key: 'kyoto',     name: 'Kyoto',     country: 'Japan',    plug: 'Type A/B',
@@ -67,31 +111,18 @@ const DATA = (() => {
       paletteNote: 'Basalt sidewalk, brick red brownstone, chrome tone, olive uniform, and cream.' },
   ];
 
-  const weatherLine = (key, season) => {
-    const t = {
-      istanbul:  { summer: 'Hot and humid, breeze off the Bosphorus in the evenings.',
-                   winter: 'Cold and grey, with occasional rain.',
-                   spring: 'Mild and blooming; some afternoon showers.',
-                   autumn: 'Crisp and clear, jacket weather most mornings.' },
-      kyoto:     { summer: 'Hot and humid, brief thunderstorms.',
-                   winter: 'Cold and dry, some snow on the temples.',
-                   spring: 'Mild with cherry blossoms; cool mornings.',
-                   autumn: 'Cool and dry, deep foliage colours.' },
-      marrakech: { summer: 'Very hot and dry, cool desert nights.',
-                   winter: 'Warm days, cold nights.',
-                   spring: 'Warm and sunny; comfortable.',
-                   autumn: 'Warm and dry, tourist high season.' },
-      paris:     { summer: 'Warm days, occasional heatwaves.',
-                   winter: 'Cold and grey; damp.',
-                   spring: 'Cool with light showers.',
-                   autumn: 'Cool and drizzly.' },
-      nyc:       { summer: 'Hot and humid; air-conditioning everywhere.',
-                   winter: 'Cold and windy; layers essential.',
-                   spring: 'Cool with sudden showers.',
-                   autumn: 'Crisp and colourful; layer weather.' },
-    };
-    return (t[key] || {})[season] || 'Season varies — check forecast closer to travel.';
-  };
+  const weatherLine = (key, season) => ({
+    istanbul:  { summer:'Hot and humid, breeze off the Bosphorus in the evenings.', winter:'Cold and grey, occasional rain.',
+                 spring:'Mild and blooming; some afternoon showers.', autumn:'Crisp and clear, jacket weather.' },
+    kyoto:     { summer:'Hot and humid, brief thunderstorms.', winter:'Cold and dry, some snow on the temples.',
+                 spring:'Mild with cherry blossoms; cool mornings.', autumn:'Cool and dry, deep foliage colours.' },
+    marrakech: { summer:'Very hot and dry, cool desert nights.', winter:'Warm days, cold nights.',
+                 spring:'Warm and sunny.', autumn:'Warm and dry, tourist high season.' },
+    paris:     { summer:'Warm days, occasional heatwaves.', winter:'Cold and grey; damp.',
+                 spring:'Cool with light showers.', autumn:'Cool and drizzly.' },
+    nyc:       { summer:'Hot and humid; air-conditioning everywhere.', winter:'Cold and windy; layers essential.',
+                 spring:'Cool with sudden showers.', autumn:'Crisp and colourful.' },
+  }[key]?.[season] || 'Check the forecast closer to travel.');
 
   const VIBES = [
     { key: 'live-like-local',    title: 'Live like a local',    sub: 'Neighborhood mornings, home-style meals.' },
@@ -105,44 +136,44 @@ const DATA = (() => {
 
   const places = {
     istanbul: [
-      { name: 'Hagia Sophia',           mix: 'famous',         cat: 'sights',   sub: 'The essential first visit.',                     traffic: 'high' },
-      { name: 'Karaköy simit stand',    mix: 'small-business', cat: 'food',     sub: 'Warm simit and hot çay from a family stand.',    traffic: 'low' },
-      { name: 'Balat side streets',     mix: 'neighborhood',   cat: 'sights',   sub: 'Painted houses, antique doors, quiet mornings.', traffic: 'medium' },
-      { name: 'Vefa Bozacısı',          mix: 'hidden',         cat: 'food',     sub: 'Century-old boza shop most tourists miss.',      traffic: 'low' },
-      { name: 'Ramadan iftar in Sultanahmet', mix: 'seasonal', cat: 'food',     sub: 'Public iftar tables during Ramadan.',            traffic: 'high' },
-      { name: 'Kadıköy fish market',    mix: 'neighborhood',   cat: 'shopping', sub: 'Everyday market on the Asian side.',             traffic: 'medium' },
+      { name: 'Hagia Sophia',              mix: 'famous',         cat: 'sights',   sub: 'The essential first visit.',                     traffic: 'high' },
+      { name: 'Karaköy simit stand',       mix: 'small-business', cat: 'food',     sub: 'Warm simit and hot çay from a family stand.',    traffic: 'low' },
+      { name: 'Balat side streets',        mix: 'neighborhood',   cat: 'sights',   sub: 'Painted houses, antique doors, quiet mornings.', traffic: 'medium' },
+      { name: 'Vefa Bozacısı',             mix: 'hidden',         cat: 'food',     sub: 'Century-old boza shop most tourists miss.',      traffic: 'low' },
+      { name: 'Ramadan iftar in Sultanahmet', mix: 'seasonal',    cat: 'food',     sub: 'Public iftar tables during Ramadan.',            traffic: 'high' },
+      { name: 'Kadıköy fish market',       mix: 'neighborhood',   cat: 'shopping', sub: 'Everyday market on the Asian side.',             traffic: 'medium' },
     ],
     kyoto: [
-      { name: 'Fushimi Inari (dawn)',   mix: 'famous',         cat: 'sights',   sub: 'Icon — go before 7 to breathe.',                 traffic: 'high' },
-      { name: 'Nishiki side alleys',    mix: 'neighborhood',   cat: 'food',     sub: 'Skip the main run, cut through the alleys.',     traffic: 'medium' },
-      { name: 'Ippodo main shop',       mix: 'small-business', cat: 'shopping', sub: 'Old matcha house; short tastings.',              traffic: 'low' },
-      { name: 'Ohara at rice-planting', mix: 'seasonal',       cat: 'outdoors', sub: 'Rural hamlet north of the city.',                traffic: 'low' },
-      { name: 'Kissa Master (silent café)', mix: 'hidden',     cat: 'food',     sub: 'Old-style jazz kissa; talk quietly.',            traffic: 'low' },
-      { name: "Philosopher's Path stroll", mix: 'neighborhood', cat: 'outdoors', sub: 'Canal-side walk between two temples.',           traffic: 'medium' },
+      { name: 'Fushimi Inari (dawn)',      mix: 'famous',         cat: 'sights',   sub: 'Icon — go before 7 to breathe.',                 traffic: 'high' },
+      { name: 'Nishiki side alleys',       mix: 'neighborhood',   cat: 'food',     sub: 'Skip the main run, cut through the alleys.',     traffic: 'medium' },
+      { name: 'Ippodo main shop',          mix: 'small-business', cat: 'shopping', sub: 'Old matcha house; short tastings.',              traffic: 'low' },
+      { name: 'Ohara at rice-planting',    mix: 'seasonal',       cat: 'outdoors', sub: 'Rural hamlet north of the city.',                traffic: 'low' },
+      { name: 'Kissa Master (silent café)', mix: 'hidden',        cat: 'food',     sub: 'Old-style jazz kissa; talk quietly.',            traffic: 'low' },
+      { name: "Philosopher's Path stroll", mix: 'neighborhood',   cat: 'outdoors', sub: 'Canal-side walk between two temples.',           traffic: 'medium' },
     ],
     marrakech: [
-      { name: 'Jemaa el-Fnaa (sunset)', mix: 'famous',         cat: 'sights',   sub: 'The square as it wakes up.',                     traffic: 'high' },
-      { name: 'Sidi Ghanem craft studios', mix: 'small-business', cat: 'shopping', sub: 'Design ateliers outside the medina.',         traffic: 'low' },
-      { name: 'Neighborhood mahlaba',   mix: 'neighborhood',   cat: 'food',     sub: 'Local dairy bar — msemmen and coffee.',          traffic: 'low' },
-      { name: 'Ben Youssef library courtyard', mix: 'hidden', cat: 'sights',   sub: 'Quiet in the afternoons.',                       traffic: 'low' },
-      { name: 'Rose festival day trip', mix: 'seasonal',       cat: 'outdoors', sub: "Kelaa M'Gouna in mid-May.",                      traffic: 'medium' },
-      { name: 'Bahia Palace',           mix: 'famous',         cat: 'sights',   sub: 'The most-photographed palace.',                  traffic: 'high' },
+      { name: 'Jemaa el-Fnaa (sunset)',    mix: 'famous',         cat: 'sights',   sub: 'The square as it wakes up.',                     traffic: 'high' },
+      { name: 'Sidi Ghanem craft studios', mix: 'small-business', cat: 'shopping', sub: 'Design ateliers outside the medina.',            traffic: 'low' },
+      { name: 'Neighborhood mahlaba',      mix: 'neighborhood',   cat: 'food',     sub: 'Local dairy bar — msemmen and coffee.',          traffic: 'low' },
+      { name: 'Ben Youssef library courtyard', mix: 'hidden',     cat: 'sights',   sub: 'Quiet in the afternoons.',                       traffic: 'low' },
+      { name: 'Rose festival day trip',    mix: 'seasonal',       cat: 'outdoors', sub: "Kelaa M'Gouna in mid-May.",                      traffic: 'medium' },
+      { name: 'Bahia Palace',              mix: 'famous',         cat: 'sights',   sub: 'The most-photographed palace.',                  traffic: 'high' },
     ],
     paris: [
-      { name: 'Louvre (late Wednesday)', mix: 'famous',        cat: 'sights',   sub: 'Icon — go late-open days.',                      traffic: 'high' },
-      { name: "Marché d'Aligre",        mix: 'neighborhood',   cat: 'food',     sub: 'Everyday market, no tourist markup.',            traffic: 'medium' },
-      { name: 'Du Pain et des Idées',   mix: 'small-business', cat: 'food',     sub: 'Small bakery loved by neighbors.',               traffic: 'medium' },
-      { name: 'Musée de la Vie Romantique tea garden', mix: 'hidden', cat: 'sights', sub: 'Quiet courtyard museum.',                traffic: 'low' },
-      { name: 'Fête de la Musique',     mix: 'seasonal',       cat: 'sights',   sub: 'Free citywide music, June 21.',                  traffic: 'high' },
-      { name: 'Coulée Verte walk',      mix: 'neighborhood',   cat: 'outdoors', sub: 'Elevated linear park.',                          traffic: 'low' },
+      { name: 'Louvre (late Wednesday)',   mix: 'famous',         cat: 'sights',   sub: 'Icon — go late-open days.',                      traffic: 'high' },
+      { name: "Marché d'Aligre",           mix: 'neighborhood',   cat: 'food',     sub: 'Everyday market, no tourist markup.',            traffic: 'medium' },
+      { name: 'Du Pain et des Idées',      mix: 'small-business', cat: 'food',     sub: 'Small bakery loved by neighbors.',               traffic: 'medium' },
+      { name: 'Musée de la Vie Romantique tea garden', mix: 'hidden', cat: 'sights', sub: 'Quiet courtyard museum.',                    traffic: 'low' },
+      { name: 'Fête de la Musique',        mix: 'seasonal',       cat: 'sights',   sub: 'Free citywide music, June 21.',                  traffic: 'high' },
+      { name: 'Coulée Verte walk',         mix: 'neighborhood',   cat: 'outdoors', sub: 'Elevated linear park.',                          traffic: 'low' },
     ],
     nyc: [
-      { name: 'Statue of Liberty',      mix: 'famous',         cat: 'sights',   sub: 'The icon.',                                      traffic: 'high' },
-      { name: 'Arthur Avenue market',   mix: 'neighborhood',   cat: 'food',     sub: 'Bronx Italian food street.',                     traffic: 'medium' },
-      { name: "Sunny's (Red Hook)",     mix: 'small-business', cat: 'food',     sub: 'Neighborhood bar with live music.',              traffic: 'low' },
-      { name: 'City Island in summer',  mix: 'seasonal',       cat: 'outdoors', sub: 'Fishing-village feel in the Bronx.',             traffic: 'medium' },
-      { name: 'The Frick (reopened)',   mix: 'hidden',         cat: 'sights',   sub: 'Smaller museum; slower pace.',                   traffic: 'low' },
-      { name: 'Corona taquería row',    mix: 'small-business', cat: 'food',     sub: 'Queens street tacos.',                           traffic: 'medium' },
+      { name: 'Statue of Liberty',         mix: 'famous',         cat: 'sights',   sub: 'The icon.',                                      traffic: 'high' },
+      { name: 'Arthur Avenue market',      mix: 'neighborhood',   cat: 'food',     sub: 'Bronx Italian food street.',                     traffic: 'medium' },
+      { name: "Sunny's (Red Hook)",        mix: 'small-business', cat: 'food',     sub: 'Neighborhood bar with live music.',              traffic: 'low' },
+      { name: 'City Island in summer',     mix: 'seasonal',       cat: 'outdoors', sub: 'Fishing-village feel in the Bronx.',             traffic: 'medium' },
+      { name: 'The Frick (reopened)',      mix: 'hidden',         cat: 'sights',   sub: 'Smaller museum; slower pace.',                   traffic: 'low' },
+      { name: 'Corona taquería row',       mix: 'small-business', cat: 'food',     sub: 'Queens street tacos.',                           traffic: 'medium' },
     ],
   };
 
@@ -156,7 +187,6 @@ const DATA = (() => {
 
   const meta = { updated: '2026-06-01', sources: ['residents','transit authorities','tourism boards'] };
 
-  // Seed community journal entries — the public "what travelers actually did" feed.
   const communityEntries = [
     { id: 'c1', authorName: 'Amina',   destination: 'istanbul',  date: '2026-05-12',
       title: 'Balat and the ferry, with two under ten',
@@ -168,81 +198,277 @@ const DATA = (() => {
       title: 'Fushimi Inari before the light',
       did: "We arrived at the base at 5:40. The lanterns were still lit; we saw maybe six other people the entire climb. Breakfast at a coffee stand outside the station on the way back.",
       change: 'Book the ryokan closer to Fushimi — the extra sleep matters when you\'re up at five.',
-      accessAccuracy: '', dietAccuracy: 'as-listed',
-      tags: ['kosher','solo'] },
+      accessAccuracy: '', dietAccuracy: 'as-listed', tags: ['kosher','solo'] },
     { id: 'c3', authorName: 'Priya',   destination: 'marrakech', date: '2026-03-19',
       title: 'Souks on a rest day',
       did: 'I was tired after three days of medina, so I did a slow morning at Le Jardin Secret, then Sidi Ghanem for the crafts and coffee. The pace saved the trip.',
-      change: 'Would have paid more for a riad with a real garden. The one I chose had a plunge pool and it went unused.',
-      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
-      tags: ['vegetarian','solo','modest'] },
+      change: 'Would have paid more for a riad with a real garden.',
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed', tags: ['vegetarian','solo','modest'] },
     { id: 'c4', authorName: 'Marco',   destination: 'paris',     date: '2026-06-08',
       title: "Marché d'Aligre morning",
       did: 'Went to the market at 9. Bought half a wheel of comté and ate it on a bench in the Coulée Verte. Small joys.',
-      change: 'Skip the Louvre — the Musée de la Vie Romantique on the same afternoon was ten times better and a fifth of the crowd.',
-      accessAccuracy: '', dietAccuracy: 'as-listed',
-      tags: ['solo'] },
+      change: 'Skip the Louvre — the Musée de la Vie Romantique was ten times better.',
+      accessAccuracy: '', dietAccuracy: 'as-listed', tags: ['solo'] },
     { id: 'c5', authorName: 'Kenji',   destination: 'kyoto',     date: '2026-11-04',
       title: "Philosopher's Path in the rain",
       did: 'The maples were mid-turn and the drizzle kept everyone home. My mother uses a cane — the whole path was flat and the temples on either end had elevators to the main halls.',
       change: 'Would have started earlier so we could have coffee at Blue Bottle before the walk.',
-      accessAccuracy: 'as-listed', dietAccuracy: 'as-listed',
-      tags: ['senior','step-free'] },
+      accessAccuracy: 'as-listed', dietAccuracy: 'as-listed', tags: ['senior','step-free'] },
     { id: 'c6', authorName: 'Sophie',  destination: 'nyc',       date: '2026-08-22',
       title: 'Brooklyn with a stroller',
       did: 'Rented a folding stroller from a mom in Park Slope. Did the Botanic Garden in the morning, DUMBO for the afternoon shade, and ate slices at Di Fara after the baby went down.',
       change: 'The G train elevator was out — plan around that if you go weekend.',
-      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
-      tags: ['family','step-free'] },
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed', tags: ['family','step-free'] },
     { id: 'c7', authorName: 'Nour',    destination: 'istanbul',  date: '2026-05-14',
       title: 'Wheelchair notes on Balat',
       did: "Balat is beautiful but not step-free at all — cobbles + hills. Kadıköy was the opposite: flat, wide sidewalks, ferry with a ramp. I'd stay there next time.",
-      change: 'Ask the hotel about accessible taxis in advance. The regular ones aren\'t.',
-      accessAccuracy: 'worse', dietAccuracy: 'as-listed',
-      tags: ['halal','step-free'] },
+      change: 'Ask the hotel about accessible taxis in advance.',
+      accessAccuracy: 'worse', dietAccuracy: 'as-listed', tags: ['halal','step-free'] },
     { id: 'c8', authorName: 'Yuki',    destination: 'paris',     date: '2026-05-01',
       title: 'A vegan patisserie hunt',
       did: 'Three days, six patisseries. Land&Monkeys was consistent, Cloud Cakes was fun. Skipped the tourist-heavy ones.',
-      change: 'Would have added Aujourd\'hui Demain for a proper sit-down lunch.',
-      accessAccuracy: '', dietAccuracy: 'as-listed',
-      tags: ['vegan','solo'] },
+      change: "Would have added Aujourd'hui Demain for a proper sit-down lunch.",
+      accessAccuracy: '', dietAccuracy: 'as-listed', tags: ['vegan','solo'] },
     { id: 'c9', authorName: 'Fatima',  destination: 'marrakech', date: '2026-02-11',
       title: 'Modest dressing in the medina',
       did: 'Long linen everything. A shopkeeper adjusted my scarf and taught me to tie it Moroccan-style — it stayed on all day.',
-      change: 'Bring one dark scarf that hides indigo transfer from local textiles.',
-      accessAccuracy: 'as-listed', dietAccuracy: 'better',
-      tags: ['halal','modest','solo'] },
+      change: 'Bring one dark scarf that hides indigo transfer.',
+      accessAccuracy: 'as-listed', dietAccuracy: 'better', tags: ['halal','modest','solo'] },
     { id: 'c10', authorName: 'Daniel', destination: 'nyc',       date: '2026-10-14',
       title: 'The Frick on a Wednesday',
       did: 'Wednesday afternoon: quiet, no timed entry needed, and the reopened Fifth Avenue rooms feel like a private home.',
-      change: 'Would pair it with a walk through Central Park to the reservoir on the way out.',
-      accessAccuracy: 'better', dietAccuracy: '',
-      tags: ['solo','senior'] },
+      change: 'Pair it with a walk through Central Park to the reservoir.',
+      accessAccuracy: 'better', dietAccuracy: '', tags: ['solo','senior'] },
     { id: 'c11', authorName: 'Zineb',  destination: 'istanbul',  date: '2026-06-01',
       title: 'Iftar tables in Sultanahmet',
-      did: 'Public iftar at the Blue Mosque grounds. Strangers passed dates, an aunt insisted I take her extra tea. I have never felt more welcomed anywhere.',
-      change: 'Arrive an hour before maghrib — you\'ll get a proper seat.',
-      accessAccuracy: 'as-listed', dietAccuracy: 'better',
-      tags: ['halal','modest','family'] },
+      did: 'Public iftar at the Blue Mosque grounds. Strangers passed dates, an aunt insisted I take her extra tea. I have never felt more welcomed.',
+      change: "Arrive an hour before maghrib — you'll get a proper seat.",
+      accessAccuracy: 'as-listed', dietAccuracy: 'better', tags: ['halal','modest','family'] },
     { id: 'c12', authorName: 'Hannah', destination: 'paris',     date: '2026-09-20',
       title: 'Fête des Vendanges in Montmartre',
       did: "Wine harvest weekend. A choir on Rue Lepic, tastings in the vineyard, and dinner at a bistro that hadn't caught on to the crowd yet.",
       change: 'Book the bistro. We got lucky and shouldn\'t rely on it.',
-      accessAccuracy: '', dietAccuracy: 'as-listed',
-      tags: ['solo'] },
+      accessAccuracy: '', dietAccuracy: 'as-listed', tags: ['solo'] },
   ];
 
-  // Curated Unsplash editorial photo IDs, chosen for warm/neutral fashion mood.
-  // (URLs use images.unsplash.com direct — network hosting shows them; sandboxed previews fall back to gradient tiles.)
-  const outfitImages = {
-    'top':       ['1554568218-0f1715e72254','1490481651871-ab68de25d43d','1571679654681-ba01b9e1e117','1509316975850-ff9c5deb0cd9'],
-    'bottom':    ['1548036328-c9fa89d128fa','1591047139829-d91aecb6caea','1552327819-8ea4b7e0c9b6','1544441893-675973e31985'],
-    'outer':     ['1594633312681-425c7b97ccd1','1551803091-e20673f15770','1524504388940-b1c1722653e1','1509316975850-ff9c5deb0cd9'],
-    'shoes':     ['1560243563-062bfc001d68','1595950653106-6c9ebd614d3a','1543163521-1bf539c55dd2','1608231387042-66d1773070a5'],
-    'accessory': ['1483985988355-763728e1935b','1541101767792-f9b2b1c4f127','1571513800374-df1bbe650e56','1517254797898-04edd251bfb3'],
+  return { destinations, weatherLine, VIBES, places, expectations, meta, communityEntries };
+})();
+
+// ---------- parser: turn free-form user text into a trip + profile hints ----------
+const parser = (() => {
+  const DEST_ALIASES = {
+    istanbul: ['istanbul','istambul','stambul','constantinople'],
+    kyoto:    ['kyoto','japan','japanese'],
+    marrakech:['marrakech','marrakesh','morocco','moroccan','medina'],
+    paris:    ['paris','france','french','parisian','parisienne'],
+    nyc:      ['nyc','new york','new york city','manhattan','brooklyn','queens','bronx','the big apple'],
   };
 
-  return { destinations, weatherLine, VIBES, places, expectations, meta, outfitImages, communityEntries };
+  const numberWords = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, a:1, an:1 };
+
+  const parseTrip = (text) => {
+    const t = ' ' + text.toLowerCase() + ' ';
+    const trip = { destination: null, days: null, travelers: null, arrivalDate: null,
+      primaryVibe: null, season: null };
+    const prefs = {
+      dietary: { halal: false, kosher: false, vegan: false, vegetarian: false, glutenFree: false, allergies: [], other: '' },
+      accessibility: { stepFree: false, lowVision: false, lowHearing: false, seatingBreaks: false, notes: '' },
+      modesty: 'no-preference',
+      medical: { devices: '', medications: '', reminderCadence: 'none' },
+      family: { childrenAges: [], babyOnBoard: false, notes: '' },
+      budget: null, pace: null, avoid: [],
+    };
+    const inferred = [];
+
+    // Destination
+    for (const [k, aliases] of Object.entries(DEST_ALIASES)) {
+      if (aliases.some(a => t.includes(' ' + a + ' ') || t.includes(' ' + a + ',') || t.includes(' ' + a + '.'))) {
+        trip.destination = k; inferred.push(DATA.destinations.find(d => d.key === k).name); break;
+      }
+    }
+
+    // Days
+    let daysMatch = t.match(/(\d+)\s*(?:day|days|nights?)/);
+    if (daysMatch) trip.days = Number(daysMatch[1]);
+    else {
+      const wordMatch = t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:day|days|nights?)/);
+      if (wordMatch) trip.days = numberWords[wordMatch[1]];
+    }
+    if (!trip.days && /\bweekend\b/.test(t)) trip.days = 3;
+    if (!trip.days && /\bweek\b/.test(t) && !/\bweekend\b/.test(t)) trip.days = 7;
+
+    // Travelers
+    if (/\bsolo\b|\balone\b|\bby myself\b|\bjust me\b/.test(t)) trip.travelers = 1;
+    else if (/\bcouple\b|\bmy (?:partner|husband|wife|boyfriend|girlfriend|spouse)\b/.test(t)) trip.travelers = 2;
+    else {
+      const trav = t.match(/(\d+)\s*(?:travelers?|people|of us|adults?)/);
+      if (trav) trip.travelers = Number(trav[1]);
+    }
+
+    // Children
+    const kidsAges = [];
+    const agesMatch = t.match(/(?:kids?|children|ages?)[\s,-]+(\d+(?:\s*(?:and|,|&)\s*\d+)*)/);
+    if (agesMatch) {
+      const nums = agesMatch[1].match(/\d+/g) || [];
+      nums.forEach(n => kidsAges.push(Number(n)));
+    }
+    if (kidsAges.length) prefs.family.childrenAges = kidsAges;
+    if (/\bbaby\b|\binfant\b|\bnewborn\b/.test(t)) { prefs.family.babyOnBoard = true; inferred.push('baby'); }
+    if (kidsAges.length) inferred.push(`kids ages ${kidsAges.join(', ')}`);
+    if (kidsAges.length && !trip.travelers) trip.travelers = 2 + kidsAges.length;
+
+    // Season / month
+    const seasonMap = { january:'winter', february:'winter', december:'winter',
+      march:'spring', april:'spring', may:'spring',
+      june:'summer', july:'summer', august:'summer',
+      september:'autumn', october:'autumn', november:'autumn' };
+    for (const [m, s] of Object.entries(seasonMap)) {
+      if (new RegExp('\\b' + m + '\\b').test(t)) { trip.season = s; inferred.push(m); break; }
+    }
+    if (!trip.season) {
+      if (/\bsummer\b/.test(t)) trip.season = 'summer';
+      else if (/\bwinter\b/.test(t)) trip.season = 'winter';
+      else if (/\bspring\b/.test(t)) trip.season = 'spring';
+      else if (/\bautumn\b|\bfall\b/.test(t)) trip.season = 'autumn';
+    }
+
+    // Dietary
+    if (/\bhalal\b/.test(t))     { prefs.dietary.halal = true;      inferred.push('halal'); }
+    if (/\bkosher\b/.test(t))    { prefs.dietary.kosher = true;     inferred.push('kosher'); }
+    if (/\bvegan\b/.test(t))     { prefs.dietary.vegan = true;      inferred.push('vegan'); }
+    if (/\bvegetarian\b|\bveggie\b/.test(t)) { prefs.dietary.vegetarian = true; inferred.push('vegetarian'); }
+    if (/\bgluten[\s-]?free\b/.test(t)) { prefs.dietary.glutenFree = true; inferred.push('gluten-free'); }
+    const allergyMatch = t.match(/allerg[ic\w]*\s+(?:to\s+)?([\w\s,]+?)(?:\.|,|;| and (?!\w+ allerg))/);
+    if (allergyMatch) prefs.dietary.allergies = allergyMatch[1].split(/,|\band\b/).map(s => s.trim()).filter(Boolean);
+    if (/peanut/.test(t) && !prefs.dietary.allergies.includes('peanuts')) prefs.dietary.allergies.push('peanuts');
+    if (/\bno pork\b/.test(t)) prefs.dietary.other = 'no pork';
+
+    // Accessibility
+    if (/\bwheelchair\b|\bstep[\s-]?free\b|\baccessib/.test(t)) { prefs.accessibility.stepFree = true; inferred.push('step-free'); }
+    if (/\bcane\b|\bcanes\b|\bwalker\b/.test(t))                  { prefs.accessibility.seatingBreaks = true; inferred.push('frequent seating'); }
+    if (/\blow vision\b|\bblind\b|\bvisually\s+impaired\b/.test(t)) { prefs.accessibility.lowVision = true; inferred.push('low-vision'); }
+    if (/\bdeaf\b|\bhearing\s+impaired\b|\blow hearing\b/.test(t)) { prefs.accessibility.lowHearing = true; inferred.push('low-hearing'); }
+
+    // Modesty
+    if (/\bmodest\b/.test(t))         { prefs.modesty = 'modest';       inferred.push('modest'); }
+    if (/\bconservative\b/.test(t))   { prefs.modesty = 'conservative'; inferred.push('conservative'); }
+
+    // Medical
+    const medMatch = t.match(/\b(insulin|cpap|epipen|epi[\s-]?pen|nebulizer|inhaler)\b/);
+    if (medMatch) { prefs.medical.medications = medMatch[1]; inferred.push(medMatch[1]); }
+
+    // Budget
+    if (/\bluxury\b|\b5[\s-]?star\b|\bhigh[\s-]?end\b/.test(t))        prefs.budget = 'luxury';
+    else if (/\bcomfort\b|\bnice hotel\b/.test(t))                     prefs.budget = 'comfort';
+    else if (/\bshoestring\b|\bbudget\b|\bbackpack/.test(t))           prefs.budget = 'shoestring';
+    else if (/\bmedium\b|\bmid[\s-]?range\b|\bmiddle\b/.test(t))       prefs.budget = 'mid';
+
+    // Pace
+    if (/\bslow\b|\bgentle\b|\brelax/.test(t))              prefs.pace = 'slow';
+    else if (/\bpacked\b|\bsee everything\b|\bfit in\b/.test(t)) prefs.pace = 'packed';
+    else if (/\bbalanced\b/.test(t))                        prefs.pace = 'balanced';
+
+    // Vibe
+    const vibeSignals = [
+      ['halal-food-culture',   ['halal']],
+      ['family-adventure',     ['kids','children','family']],
+      ['luxury-without-rush',  ['luxury','5 star','fine dining']],
+      ['live-like-local',      ['local','locals','neighborhood','authentic','food','markets','market']],
+      ['iconic-first-visit',   ['first time','icons','must see','landmarks','tourist','iconic','sights']],
+      ['relaxed-scenic',       ['relax','scenic','slow','views','sunset','peaceful','quiet','gardens']],
+      ['hidden-gems',          ['hidden','off the beaten','undiscovered','unusual']],
+    ];
+    for (const [vibe, signals] of vibeSignals) {
+      if (signals.some(s => t.includes(s))) { trip.primaryVibe = vibe; break; }
+    }
+
+    // Sensible defaults for anything we didn't extract
+    if (!trip.destination) return { trip: null, prefs, inferred, missing: ['destination'] };
+    if (!trip.days) { trip.days = 4;       inferred.push('4 days (default)'); }
+    if (!trip.travelers) { trip.travelers = 1; }
+    if (!trip.season)    { trip.season = 'summer'; }
+    if (!trip.primaryVibe) trip.primaryVibe = 'iconic-first-visit';
+
+    return { trip, prefs, inferred, missing: [] };
+  };
+
+  // Merge parsed prefs into an existing profile without clobbering user-set fields.
+  const mergeProfile = (existing, prefs) => {
+    const p = { ...existing };
+    p.dietary = { ...existing.dietary };
+    p.accessibility = { ...existing.accessibility };
+    p.medical = { ...existing.medical };
+    p.family  = { ...existing.family };
+    ['halal','kosher','vegan','vegetarian','glutenFree'].forEach(k => { if (prefs.dietary[k]) p.dietary[k] = true; });
+    if (prefs.dietary.allergies?.length) {
+      p.dietary.allergies = Array.from(new Set([...(existing.dietary.allergies || []), ...prefs.dietary.allergies]));
+    }
+    if (prefs.dietary.other) p.dietary.other = prefs.dietary.other;
+    ['stepFree','lowVision','lowHearing','seatingBreaks'].forEach(k => { if (prefs.accessibility[k]) p.accessibility[k] = true; });
+    if (prefs.modesty !== 'no-preference') p.modesty = prefs.modesty;
+    if (prefs.medical.medications) p.medical.medications = prefs.medical.medications;
+    if (prefs.family.babyOnBoard) p.family.babyOnBoard = true;
+    if (prefs.family.childrenAges?.length) {
+      p.family.childrenAges = Array.from(new Set([...(existing.family.childrenAges || []), ...prefs.family.childrenAges])).sort((a,b) => a-b);
+    }
+    if (prefs.budget) p.budget = prefs.budget;
+    if (prefs.pace)   p.pace   = prefs.pace;
+    return p;
+  };
+
+  return { parseTrip, mergeProfile };
+})();
+
+// ---------- ai: optional OpenAI wrapper ----------
+const ai = (() => {
+  const hasKey = () => !!store.ai.getKey();
+  const enabled = () => hasKey();
+
+  const parseTripViaGPT = async (userInput, priorMessages = []) => {
+    const key = store.ai.getKey();
+    if (!key) throw new Error('No OpenAI key set.');
+    const model = store.ai.getModel();
+    const sys = `You are malem, a warm and precise travel-planning assistant.
+
+Given a user's free-form description of a trip, return STRICT JSON with:
+{
+  "reply": "one short conversational reply, first person, warm, under 40 words",
+  "trip": {
+    "destination": "istanbul" | "kyoto" | "marrakech" | "paris" | "nyc" | null,
+    "days": integer or null,
+    "travelers": integer or null,
+    "arrivalDate": "YYYY-MM-DD" or null,
+    "season": "spring"|"summer"|"autumn"|"winter" or null,
+    "primaryVibe": "live-like-local"|"iconic-first-visit"|"relaxed-scenic"|"hidden-gems"|"family-adventure"|"halal-food-culture"|"luxury-without-rush" or null
+  },
+  "profile": {
+    "dietary": { "halal": bool, "kosher": bool, "vegan": bool, "vegetarian": bool, "glutenFree": bool, "allergies": [string], "other": string },
+    "accessibility": { "stepFree": bool, "lowVision": bool, "lowHearing": bool, "seatingBreaks": bool, "notes": string },
+    "modesty": "no-preference"|"modest"|"conservative",
+    "medical": { "medications": string, "devices": string, "reminderCadence": "none"|"daily"|"twice-daily" },
+    "family": { "childrenAges": [int], "babyOnBoard": bool, "notes": string },
+    "budget": "shoestring"|"mid"|"comfort"|"luxury" or null,
+    "pace":   "slow"|"balanced"|"packed" or null,
+    "avoid":  [string]
+  },
+  "missing": [string]
+}
+
+If destination is not one of the five, set destination null and put a friendly clarifying question in "reply".
+Never invent constraints the user didn't state. Fields not stated → null / false / empty.`;
+
+    const messages = [{ role: 'system', content: sys }, ...priorMessages, { role: 'user', content: userInput }];
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model, messages, response_format: { type: 'json_object' }, temperature: 0.3 }),
+    });
+    if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}`);
+    const data = await res.json();
+    return JSON.parse(data.choices[0].message.content);
+  };
+
+  return { enabled, hasKey, parseTripViaGPT };
 })();
 
 // ---------- engine ----------
@@ -343,14 +569,13 @@ const engine = (() => {
         if (!/kosher/i.test(title)) title = title.replace(/dinner|lunch|breakfast/i, m => `Kosher ${m.toLowerCase()}`);
         respects.push('kosher');
       }
-      else if (p.dietary.vegan) { respects.push('vegan-friendly'); }
-      else if (p.dietary.vegetarian) { respects.push('vegetarian-friendly'); }
+      else if (p.dietary.vegan) respects.push('vegan-friendly');
+      else if (p.dietary.vegetarian) respects.push('vegetarian-friendly');
       if (p.dietary.glutenFree) respects.push('gluten-free');
       if ((p.dietary.allergies || []).length) respects.push('allergy-safe');
     }
-    if (p.accessibility.stepFree)      respects.push('step-free');
-    if (p.accessibility.seatingBreaks && (block.kind === 'sight' || block.kind === 'activity'))
-      respects.push('seating breaks');
+    if (p.accessibility.stepFree) respects.push('step-free');
+    if (p.accessibility.seatingBreaks && (block.kind === 'sight' || block.kind === 'activity')) respects.push('seating breaks');
     if (p.family.babyOnBoard && block.kind === 'rest') respects.push('baby nap window');
     if ((p.family.childrenAges || []).some(a => a <= 5) && block.kind === 'meal') respects.push('kid menu');
     if (p.medical.reminderCadence !== 'none' && block.kind === 'rest') respects.push('medication reminder');
@@ -366,13 +591,12 @@ const engine = (() => {
   };
 
   const buildItinerary = (req, profile) => {
-    const primary = req.primaryVibe;
     const respected = respectedFromProfile(profile);
     const days = [];
     for (let d = 0; d < req.days; d++) {
-      const themes = vibeThemes[primary] || [`Day ${d + 1}`];
+      const themes = vibeThemes[req.primaryVibe] || [`Day ${d + 1}`];
       const theme = themes[d % themes.length];
-      const pool = blockPools[primary] || [];
+      const pool = blockPools[req.primaryVibe] || [];
       const shaped = paceFilter(pool, profile.pace).map(b => applyProfile(b, profile));
       const isoDate = req.arrivalDate
         ? new Date(new Date(req.arrivalDate).getTime() + d * 86400000).toISOString().slice(0, 10)
@@ -382,18 +606,7 @@ const engine = (() => {
     return { request: req, respectedFromProfile: respected, days };
   };
 
-  const suggestVibe = (profile) => {
-    const v = new Set(profile.vibes || []);
-    if (profile.dietary.halal) return 'halal-food-culture';
-    if ((profile.family.childrenAges || []).length || profile.family.babyOnBoard) return 'family-adventure';
-    if (v.has('luxury') || profile.budget === 'luxury') return 'luxury-without-rush';
-    if (v.has('local') || v.has('food-focused')) return 'live-like-local';
-    if (v.has('relaxed')) return 'relaxed-scenic';
-    if (v.has('adventurous')) return 'hidden-gems';
-    return 'iconic-first-visit';
-  };
-
-  // ----- Packing (same generator as before, refined text) -----
+  // ----- Packing -----
   const buildPacking = (req, profile) => {
     const A = new Set(req.activities || []);
     const cold = req.season === 'winter' || A.has('cold-weather');
@@ -487,18 +700,13 @@ const engine = (() => {
     const plans = [
       { title: 'Relaxed', badge: lowE ? 'Low energy' : 'Easy pace',
         why: `${ctx.hours}h and ${ctx.weather}${lowE ? ', low energy' : ''}. Covered, seated, quiet.`,
-        steps: [ covered('A café with a view'), 'Slow walk under cover', 'Bookshop or small gallery',
-                 family ? 'Playful stop' : 'Sit-down tea' ] },
+        steps: [ covered('A café with a view'), 'Slow walk under cover', 'Bookshop or small gallery', family ? 'Playful stop' : 'Sit-down tea' ] },
       { title: 'Food-focused', badge: dietTag(),
         why: `Stalls and cafés respecting your dietary profile (${dietTag()}).`,
-        steps: [ 'Bakery start',
-                 wet ? 'Covered market walk' : hot ? 'Iced treat and short walk' : 'Local market walk',
-                 'Lunch — profile-respecting', 'Sweet stop for the road' ] },
+        steps: [ 'Bakery start', wet ? 'Covered market walk' : hot ? 'Iced treat and short walk' : 'Local market walk', 'Lunch — profile-respecting', 'Sweet stop for the road' ] },
       { title: 'Cultural', badge: profile.accessibility.stepFree ? 'Step-free preferred' : 'Moderate',
         why: 'A cultural loop calibrated to your energy and any step-free needs.',
-        steps: [ wet ? 'Museum or covered courtyard' : 'Historic quarter walk',
-                 cold ? 'Warm-up stop' : hot ? 'Shaded courtyard' : 'A small independent site',
-                 'Sunset viewpoint', 'Bite before heading back' ] },
+        steps: [ wet ? 'Museum or covered courtyard' : 'Historic quarter walk', cold ? 'Warm-up stop' : hot ? 'Shaded courtyard' : 'A small independent site', 'Sunset viewpoint', 'Bite before heading back' ] },
     ];
     return plans.map(p => ({ ...p, steps: p.steps.slice(0, Math.max(2, Math.min(p.steps.length, hours + 1))) }));
   };
@@ -510,13 +718,13 @@ const engine = (() => {
     const cat = ctx.category || 'all';
     return list.filter(p => (mix.size ? mix.has(p.mix) : true) && (cat === 'all' || p.cat === cat)).map(p => ({
       ...p,
-      gemScore: p.mix === 'hidden'   ? 'Hidden — strong local sentiment.' :
-                p.mix === 'small-business' ? 'Small business — repeat visitors verify.' :
-                p.mix === 'neighborhood'   ? 'Neighborhood favourite.' :
-                p.mix === 'famous'         ? 'Icon — go early or off-hours.' :
-                p.mix === 'seasonal'       ? 'Seasonal — check the window.' : '',
-      trafficNote: p.traffic === 'high' ? 'High traffic — consider off-hours.' :
-                   p.traffic === 'low'  ? 'Low traffic — respect the quiet.' : 'Steady traffic.',
+      gemScore: p.mix === 'hidden' ? 'Hidden — strong local sentiment.'
+              : p.mix === 'small-business' ? 'Small business — repeat visitors verify.'
+              : p.mix === 'neighborhood'   ? 'Neighborhood favourite.'
+              : p.mix === 'famous'         ? 'Icon — go early or off-hours.'
+              : p.mix === 'seasonal'       ? 'Seasonal — check the window.' : '',
+      trafficNote: p.traffic === 'high' ? 'High traffic — consider off-hours.'
+                 : p.traffic === 'low'  ? 'Low traffic — respect the quiet.' : 'Steady traffic.',
     }));
   };
 
@@ -540,19 +748,62 @@ const engine = (() => {
     }));
   };
 
-  // ----- Outfits (mood-board pins per day) -----
-  const buildOutfits = (itinerary, profile, season, destinationKey) => {
-    const s = ({ spring:{ warmth:'cool', outer:'trench' },
-                 summer:{ warmth:'warm', outer:'linen shirt for evening' },
-                 autumn:{ warmth:'cool', outer:'wool coat' },
-                 winter:{ warmth:'cold', outer:'insulated overcoat' } }[season])
-             || { warmth:'mild', outer:'light jacket' };
+  // ----- Outfits (image URLs use keyword-based Unsplash Source, changes per trip) -----
+  const seasonInfo = (season) => ({
+    spring:{ warmth:'cool', words:['spring','trench','light'],   outer:'trench coat' },
+    summer:{ warmth:'warm', words:['linen','summer','airy'],     outer:'linen shirt' },
+    autumn:{ warmth:'cool', words:['wool','autumn','layered'],   outer:'wool coat' },
+    winter:{ warmth:'cold', words:['cashmere','winter','coat'],  outer:'wool overcoat' },
+  }[season] || { warmth:'mild', words:['neutral'], outer:'light jacket' });
+
+  const vibeStyleKeywords = (vibe) => ({
+    'live-like-local':    ['neutral','minimal','effortless'],
+    'iconic-first-visit': ['classic','tailored','clean'],
+    'relaxed-scenic':     ['flowy','breezy','soft'],
+    'hidden-gems':        ['understated','vintage','textured'],
+    'family-adventure':   ['practical','durable','stretch'],
+    'halal-food-culture': ['modest','elegant','draped'],
+    'luxury-without-rush':['luxury','silk','refined'],
+  }[vibe] || ['minimal','editorial']);
+
+  // Unsplash Source URL (no key required). Random matching photo per keyword set.
+  const unsplashURL = (keywords, w = 480, h = 600) =>
+    `https://source.unsplash.com/${w}x${h}/?${encodeURIComponent(keywords.filter(Boolean).join(','))}`;
+
+  const buildOutfits = (itinerary, profile, season, destinationKey, trip) => {
+    const s = seasonInfo(season);
     const modest = profile.modesty !== 'no-preference';
     const family = (profile.family.childrenAges || []).length || profile.family.babyOnBoard;
+    const styleWords = vibeStyleKeywords(trip.primaryVibe);
     const palette = (DATA.destinations.find(d => d.key === destinationKey)?.palette) || ['#E4D9BC','#8E6E4C','#1F1C15','#D5C7A6','#5C4232'];
+    const destName = (DATA.destinations.find(d => d.key === destinationKey)?.name || '').toLowerCase();
 
     const pick = (arr, i) => arr[i % arr.length];
-    const IM = DATA.outfitImages;
+
+    // Per-item keyword mix for image search
+    const partKeywords = (partName, look) => {
+      const wardrobe = {
+        top:      ['blouse','shirt','sweater','knitwear'],
+        bottom:   ['trouser','skirt','pants'],
+        outer:    ['coat','jacket','trench'],
+        shoes:    ['shoes','loafer','sandal','boot'],
+        accessory:['scarf','hat','bag','earring'],
+      };
+      const p = partName.toLowerCase();
+      return [
+        ...wardrobe[p] || ['fashion'],
+        ...s.words.slice(0, 1),
+        modest && p !== 'shoes' ? 'modest' : '',
+        ...styleWords.slice(0, 1),
+        'editorial','fashion',
+      ].filter(Boolean);
+    };
+    const heroKeywords = (look) => [
+      'outfit', ...styleWords.slice(0, 2), ...s.words.slice(0, 1),
+      modest ? 'modest' : '',
+      look.name.toLowerCase().includes('evening') ? 'evening' : 'street',
+      'editorial','fashion','neutral',
+    ].filter(Boolean);
 
     const pieceForTop = (fine) => fine ? (modest ? 'Draped silk blouse, long sleeve' : 'Silk blouse')
                                        : (modest ? 'Loose linen shirt, long sleeve' : (s.warmth === 'cold' ? 'Cream cashmere sweater' : 'Cotton tee or linen shirt'));
@@ -566,8 +817,7 @@ const engine = (() => {
       const fine = day.blocks.some(b => /tasting|refined|classic dinner/i.test(b.title));
       const evening = day.blocks.some(b => Number(b.time.split(':')[0]) >= 18);
 
-      // Day look
-      const dayLook = {
+      looks.push({
         dayIndex: dayIndex + 1, date: day.date, theme: day.theme,
         name: religious ? 'Modest day look' : 'Day look',
         why: [ walking ? 'Walking day' : 'Easier day',
@@ -583,8 +833,7 @@ const engine = (() => {
           { part: 'Shoes',     value: profile.accessibility.stepFree ? 'Cushioned flats' : (walking ? 'Soft leather sneakers or loafers' : 'Slim loafers') },
           { part: 'Accessory', value: religious ? 'Silk headscarf' : (s.warmth === 'cold' ? 'Wool scarf' : 'Wide-brim straw hat') },
         ],
-      };
-      looks.push(dayLook);
+      });
 
       if (evening) {
         looks.push({
@@ -604,34 +853,24 @@ const engine = (() => {
       }
     });
 
-    // Build pins: one "hero" pin per look (the whole outfit), plus two key
-    // pieces as separate mood tiles. Keeps the board dense but not overwhelming.
     const pins = [];
     looks.forEach((look, looki) => {
-      const [heroImg, ...restImgs] = IM.top; // just to seed indices deterministically
-      // 1) Hero pin — the whole look
       pins.push({
-        kind: 'look',
-        dayIndex: look.dayIndex, date: look.date, theme: look.theme,
-        look: look.name, why: look.why,
-        items: look.items,
-        img: `https://images.unsplash.com/photo-${pick(IM.top, looki)}?w=520&q=80&auto=format&fit=crop`,
+        kind: 'look', dayIndex: look.dayIndex, date: look.date, theme: look.theme,
+        look: look.name, why: look.why, items: look.items,
+        img: unsplashURL(heroKeywords(look), 520, 640),
         toneA: palette[looki % palette.length],
         toneB: palette[(looki + 3) % palette.length],
         ar: pick(['3/4', '4/5', '2/3'], looki),
       });
-      // 2) Two key pieces (rotates across parts so the board has variety)
-      const keyParts = ['Top', 'Shoes'];
-      keyParts.forEach((partName, ki) => {
+      // Two key-piece pins per look
+      ['Top', 'Shoes'].forEach((partName, ki) => {
         const item = look.items.find(x => x.part === partName);
         if (!item) return;
-        const imgs = IM[partName.toLowerCase()] || IM.top;
         pins.push({
-          kind: 'piece',
-          dayIndex: look.dayIndex, date: look.date, theme: look.theme,
-          look: look.name,
-          part: item.part, value: item.value,
-          img: `https://images.unsplash.com/photo-${pick(imgs, looki * 3 + ki)}?w=420&q=80&auto=format&fit=crop`,
+          kind: 'piece', dayIndex: look.dayIndex, date: look.date, theme: look.theme,
+          look: look.name, part: item.part, value: item.value,
+          img: unsplashURL(partKeywords(partName, look), 420, 500),
           toneA: palette[(looki + ki + 1) % palette.length],
           toneB: palette[(looki + ki + 4) % palette.length],
           ar: pick(['4/5', '1/1', '3/4'], looki + ki),
@@ -648,8 +887,7 @@ const engine = (() => {
     members.forEach(m => { if (m.vibe) votes[m.vibe] = (votes[m.vibe] || 0) + 1; });
     const sorted = Object.entries(votes).sort((a, b) => b[1] - a[1]);
     if (!sorted.length) return { winner: null, blend: null, votes };
-    const [winner, wCount] = sorted[0];
-    const r = sorted[1];
+    const [winner, wCount] = sorted[0]; const r = sorted[1];
     return { winner, blend: r && r[1] >= wCount / 2 ? r[0] : null, votes };
   };
   const consolidateConstraints = (members) => {
@@ -658,7 +896,7 @@ const engine = (() => {
     return Array.from(set);
   };
 
-  return { buildItinerary, suggestVibe, buildPacking, buildDiscover, buildLocal, buildExpect, buildOutfits, blendGroupVibes, consolidateConstraints };
+  return { buildItinerary, buildPacking, buildDiscover, buildLocal, buildExpect, buildOutfits, blendGroupVibes, consolidateConstraints };
 })();
 
 // ---------- auth ----------
@@ -685,6 +923,7 @@ const auth = (() => {
     const acc = store.accounts.all()[s.email];
     return acc ? { email: s.email, ...acc } : null;
   };
+
   const useDemo = () => {
     const email = 'amina.demo@malem.app';
     const map = store.accounts.all();
@@ -715,8 +954,16 @@ const auth = (() => {
       change: 'Skip Grand Bazaar mid-day; do it near opening.',
       accessAccuracy: 'as-listed', dietAccuracy: 'better', publicEntry: true,
     }]);
+    // Seed a trip, activate it.
+    const trip = store.trips.add(email, {
+      destination: 'istanbul', arrivalDate: '', days: 4, travelers: 5,
+      primaryVibe: 'halal-food-culture', season: 'summer',
+      summary: 'Halal food & culture in Istanbul',
+    });
+    store.activeTrip.set(email, trip.id);
     store.session.set({ email });
   };
+
   return { signup, signin, signout, current, useDemo };
 })();
 
@@ -730,12 +977,8 @@ const ui = (() => {
   const parseIntList = (s) => parseList(s).map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0);
 
   const showScreen = (name) => {
-    ['auth','setup','dash','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
+    ['auth','app','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
     window.scrollTo({ top: 0, behavior: 'instant' });
-  };
-  const populateDestinations = () => {
-    const opts = DATA.destinations.map(d => `<option value="${d.key}">${escapeHtml(d.name)} — ${escapeHtml(d.country)}</option>`).join('');
-    $$('select[data-destinations]').forEach(sel => { sel.innerHTML = opts; });
   };
 
   const applyTheme = () => {
@@ -756,7 +999,7 @@ const ui = (() => {
       authMode = m; const isSignup = m === 'signup';
       $('#name-field').hidden = !isSignup; form.name.required = isSignup;
       $('#auth-title').textContent = isSignup ? 'Create your account.' : 'Welcome back.';
-      $('#auth-lede').textContent  = isSignup ? 'Prototype accounts are stored in this browser.' : 'Sign in to pick up your next trip.';
+      $('#auth-lede').textContent  = isSignup ? 'Prototype accounts are stored in this browser.' : "Sign in and tell malem where you're heading.";
       $('#auth-submit').textContent = isSignup ? 'Create account' : 'Sign in';
       $('#auth-tag').textContent = isSignup ? 'Sign up' : 'Sign in';
       $('#auth-switch').innerHTML = isSignup
@@ -771,72 +1014,260 @@ const ui = (() => {
       try {
         if (authMode === 'signup') auth.signup(form.name.value, form.email.value, form.password.value);
         else auth.signin(form.email.value, form.password.value);
+        location.hash = '#/chat';
         route();
       } catch (err) { flash('#auth-note', err.message || 'Something went wrong.'); }
     });
     $('#try-demo-account').addEventListener('click', (e) => {
       e.preventDefault(); auth.useDemo();
-      const email = auth.current().email;
-      if (!store.trip.load(email)) {
-        store.trip.save(email, { destination: 'istanbul', arrivalDate: '', days: 4, travelers: 5, primaryVibe: 'halal-food-culture', season: 'summer' });
-      }
-      route();
-    });
-  };
-
-  // ---- Setup ----
-  const initSetup = () => {
-    const form = $('#setup-form'); const grid = $('#setup-vibes'); const hint = $('#vibe-hint');
-    const renderVibeGrid = (suggested) => {
-      grid.innerHTML = DATA.VIBES.map(v => `
-        <label class="vibe-tile" data-value="${v.key}"${v.key === suggested ? ' data-selected="true"' : ''}>
-          <input type="radio" name="primaryVibe" value="${v.key}"${v.key === suggested ? ' checked' : ''} />
-          <span class="title">${escapeHtml(v.title)}</span>
-          <span class="sub">${escapeHtml(v.sub)}</span>
-        </label>`).join('');
-      grid.addEventListener('change', () => {
-        const val = (grid.querySelector('input:checked') || {}).value || '';
-        $$('.vibe-tile', grid).forEach(t => t.dataset.selected = String(t.dataset.value === val));
-      });
-    };
-    const render = () => {
-      const me = auth.current();
-      $('#setup-hi').textContent = `Hi, ${me.name.split(/\s+/)[0]}`;
-      const profile = store.profile.load(me.email);
-      const suggested = engine.suggestVibe(profile);
-      hint.textContent = (profile.vibes && profile.vibes.length)
-        ? 'Pick one. Suggestion is drawn from your saved profile.'
-        : 'Pick a vibe. You can adjust your profile any time.';
-      renderVibeGrid(suggested);
-    };
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const me = auth.current();
-      const primaryVibe = (form.primaryVibe.value || engine.suggestVibe(store.profile.load(me.email)));
-      const trip = {
-        destination: form.destination.value,
-        arrivalDate: form.arrivalDate.value || '',
-        days: Math.max(1, Math.min(21, Number(form.days.value) || 4)),
-        travelers: Math.max(1, Number(form.travelers.value) || 1),
-        primaryVibe, season: guessSeason(form.arrivalDate.value),
-      };
-      store.trip.save(me.email, trip);
       location.hash = '#/itinerary';
       route();
     });
-    $('#setup-edit-profile').addEventListener('click', () => openProfileSheet(render));
-    $('#setup-signout').addEventListener('click', (e) => { e.preventDefault(); auth.signout(); route(); });
-    return { render };
   };
-  let setupRender = null;
 
-  const guessSeason = (isoDate) => {
-    if (!isoDate) return 'summer';
-    const m = new Date(isoDate).getMonth() + 1;
-    if (m >= 3 && m <= 5) return 'spring';
-    if (m >= 6 && m <= 8) return 'summer';
-    if (m >= 9 && m <= 11) return 'autumn';
-    return 'winter';
+  // ---- Chat ----
+  const chatSubmit = async () => {
+    const ta = $('#chat-textarea');
+    const text = ta.value.trim();
+    if (!text) return;
+    ta.value = ''; autosizeTextarea();
+    $('#chat-suggestions').hidden = true;
+
+    const me = auth.current();
+    appendChatMessage('user', text);
+    appendChatMessage('assistant', 'Reading your trip…', { pending: true });
+
+    let result = null; let usedGPT = false;
+    if (ai.enabled()) {
+      try {
+        const gpt = await ai.parseTripViaGPT(text);
+        usedGPT = true;
+        result = { trip: gpt.trip, prefs: gpt.profile, reply: gpt.reply, missing: gpt.missing || [], inferred: [] };
+        // Convert GPT profile schema to internal profile fields we merge later
+      } catch (err) { console.error('GPT failed, falling back to local parser', err); }
+    }
+    if (!result) {
+      const local = parser.parseTrip(text);
+      result = { trip: local.trip, prefs: local.prefs, missing: local.missing, inferred: local.inferred };
+    }
+
+    removePendingMessage();
+    if (!result.trip || result.missing.includes('destination')) {
+      appendChatMessage('assistant',
+        (result.reply || `I couldn't pin down which destination. malem's demo currently supports Istanbul, Kyoto, Marrakech, Paris, and New York. Which one?`));
+      return;
+    }
+
+    // Merge profile: parsed prefs layered onto the user's saved profile
+    const existing = store.profile.load(me.email);
+    const merged = parser.mergeProfile(existing, result.prefs);
+    store.profile.save(me.email, merged);
+
+    // Save trip
+    const dest = DATA.destinations.find(d => d.key === result.trip.destination);
+    const vibe = DATA.VIBES.find(v => v.key === result.trip.primaryVibe);
+    const summary = `${vibe ? vibe.title : 'Trip'} in ${dest ? dest.name : result.trip.destination}`;
+    const trip = store.trips.add(me.email, { ...result.trip, summary });
+    store.activeTrip.set(me.email, trip.id);
+
+    const replyText = result.reply
+      || `Got it. ${dest?.name || result.trip.destination}, ${result.trip.days} day${result.trip.days > 1 ? 's' : ''}${result.trip.travelers ? `, ${result.trip.travelers} traveler${result.trip.travelers > 1 ? 's' : ''}` : ''}. I've noted: ${(result.inferred && result.inferred.length) ? result.inferred.join(', ') : 'no personal constraints from this message'}.`;
+    appendChatMessage('assistant', replyText + (usedGPT ? '' : ''));
+    appendTripCard(trip);
+    renderTripHistory(me);
+  };
+
+  const appendChatMessage = (role, text, opts = {}) => {
+    const log = $('#chat-log');
+    const el = document.createElement('div');
+    el.className = 'msg ' + role;
+    if (opts.pending) el.dataset.pending = 'true';
+    el.innerHTML = `<p>${escapeHtml(text).replace(/\n/g, '<br />')}</p>`;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    el.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  };
+  const removePendingMessage = () => { $$('#chat-log .msg[data-pending]').forEach(el => el.remove()); };
+
+  const appendTripCard = (trip) => {
+    const dest = DATA.destinations.find(d => d.key === trip.destination);
+    const vibe = DATA.VIBES.find(v => v.key === trip.primaryVibe);
+    const el = document.createElement('article');
+    el.className = 'msg trip-card';
+    el.innerHTML = `
+      <div class="head">
+        <h4>${escapeHtml(dest ? dest.name : trip.destination)}</h4>
+        <span class="stamp">Trip generated</span>
+      </div>
+      <div class="details">
+        <span>${trip.days} day${trip.days > 1 ? 's' : ''}</span>
+        <span>${trip.travelers} traveler${trip.travelers > 1 ? 's' : ''}</span>
+        <span>${escapeHtml(vibe ? vibe.title : trip.primaryVibe)}</span>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="btn primary" data-view-trip="${escapeHtml(trip.id)}">View the plan →</button>
+        <button type="button" class="btn ghost" id="chat-new-trip">Start another</button>
+      </div>`;
+    $('#chat-log').appendChild(el);
+    el.querySelector('[data-view-trip]').addEventListener('click', () => {
+      const me = auth.current(); if (!me) return;
+      store.activeTrip.set(me.email, trip.id);
+      location.hash = '#/itinerary';
+      route();
+    });
+    el.querySelector('#chat-new-trip').addEventListener('click', () => {
+      startNewTrip();
+    });
+  };
+
+  const autosizeTextarea = () => {
+    const ta = $('#chat-textarea'); if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 220) + 'px';
+  };
+
+  const initChat = () => {
+    const form = $('#chat-form'); const ta = $('#chat-textarea');
+    form.addEventListener('submit', (e) => { e.preventDefault(); chatSubmit(); });
+    ta.addEventListener('input', autosizeTextarea);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSubmit(); }
+    });
+    $$('.chat-suggestions .chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        ta.value = chip.dataset.prompt;
+        autosizeTextarea();
+        chatSubmit();
+      });
+    });
+    $('#chat-settings-link').addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
+    updateChatHint();
+  };
+
+  const updateChatHint = () => {
+    const el = $('#chat-hint');
+    if (ai.enabled()) el.innerHTML = 'Powered by GPT (<a href="#" id="chat-settings-link-2">change</a>).';
+    else              el.innerHTML = 'Powered by a local parser. <a href="#" id="chat-settings-link-2">Add your OpenAI key</a> to switch to GPT.';
+    const l = $('#chat-settings-link-2'); if (l) l.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
+  };
+
+  const startNewTrip = () => {
+    const log = $('#chat-log'); log.innerHTML = '';
+    $('#chat-suggestions').hidden = false;
+    location.hash = '#/chat';
+    const me = auth.current();
+    if (me) { store.activeTrip.clear(me.email); renderTripHistory(me); }
+    route();
+  };
+
+  // ---- Sidebar ----
+  const renderSidebar = (me) => {
+    $('#who-name').textContent = me.name;
+    renderTripHistory(me);
+    const activeId = store.activeTrip.get(me.email);
+    const trips = store.trips.load(me.email);
+    const activeTrip = trips.find(t => t.id === activeId);
+    $('#trip-side-nav').hidden = !activeTrip;
+  };
+
+  const renderTripHistory = (me) => {
+    const list = $('#trip-history');
+    const trips = store.trips.load(me.email).slice().reverse();
+    const activeId = store.activeTrip.get(me.email);
+    if (!trips.length) {
+      list.innerHTML = `<li class="th-empty">No trips yet — say where you're heading.</li>`;
+      return;
+    }
+    list.innerHTML = trips.map(t => {
+      const dest = DATA.destinations.find(d => d.key === t.destination);
+      const vibe = DATA.VIBES.find(v => v.key === t.primaryVibe);
+      return `<li>
+          <a href="#/itinerary" data-trip-id="${escapeHtml(t.id)}"${t.id === activeId ? ' class="is-active"' : ''}>
+            <span class="th-title">${escapeHtml(dest ? dest.name : t.destination)}</span>
+            <span class="th-sub">${t.days} day${t.days > 1 ? 's' : ''} · ${escapeHtml(vibe ? vibe.title : t.primaryVibe)}</span>
+          </a>
+        </li>`;
+    }).join('');
+    // Bind clicks: set active trip before route runs
+    list.querySelectorAll('a[data-trip-id]').forEach(a => {
+      a.addEventListener('click', () => {
+        store.activeTrip.set(me.email, a.dataset.tripId);
+      });
+    });
+  };
+
+  // ---- Community (public) ----
+  const getCommunityEntries = () => {
+    const seeds = (DATA.communityEntries || []).map(e => ({ ...e, source: 'seed' }));
+    const localAccounts = store.accounts.all();
+    const local = [];
+    Object.entries(localAccounts).forEach(([email, acc]) => {
+      const journal = store.journal.load(email);
+      const trip = store.trips.load(email).slice().reverse()[0]; // most recent trip
+      journal.filter(x => x.publicEntry).forEach(x => {
+        local.push({
+          id: `local-${email}-${x.id}`,
+          authorName: acc.name || email.split('@')[0],
+          destination: trip?.destination || 'unknown',
+          date: x.date || '',
+          title: x.title, did: x.did, change: x.change,
+          accessAccuracy: x.accessAccuracy, dietAccuracy: x.dietAccuracy,
+          tags: [], source: 'local',
+        });
+      });
+    });
+    return [...seeds, ...local].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  };
+  const initPublic = () => {
+    const destSel = $('#public-filter-dest');
+    DATA.destinations.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.key; o.textContent = `${d.name} — ${d.country}`;
+      destSel.appendChild(o);
+    });
+    destSel.addEventListener('change', renderCommunity);
+    $('#public-filter-tag').addEventListener('change', renderCommunity);
+    $('#public-signin').addEventListener('click', (e) => { e.preventDefault();
+      const me = auth.current();
+      location.hash = me ? '#/itinerary' : '#/auth';
+    });
+  };
+  const renderCommunity = () => {
+    const me = auth.current();
+    const btn = $('#public-signin');
+    if (me) { btn.textContent = 'Back to your trip'; btn.setAttribute('href', '#/itinerary'); }
+    else    { btn.textContent = 'Sign in';           btn.setAttribute('href', '#/auth'); }
+
+    const dest = $('#public-filter-dest').value;
+    const tag  = $('#public-filter-tag').value;
+    let entries = getCommunityEntries();
+    if (dest !== 'all') entries = entries.filter(e => e.destination === dest);
+    if (tag  !== 'all') entries = entries.filter(e => (e.tags || []).includes(tag));
+    const root = $('#public-entries');
+    if (!entries.length) { root.innerHTML = `<p class="hint">Nothing yet in that view. Try another filter.</p>`; return; }
+    root.innerHTML = entries.map(e => {
+      const destName = DATA.destinations.find(d => d.key === e.destination)?.name || e.destination;
+      return `
+        <article class="pub-entry">
+          <div class="head">
+            <div>
+              <h3>${escapeHtml(e.title)}${e.source === 'local' ? '<span class="badge-local">Yours</span>' : ''}</h3>
+              <div class="author">by ${escapeHtml(e.authorName)}${e.date ? ` · ${escapeHtml(e.date)}` : ''}</div>
+            </div>
+            <span class="dest">${escapeHtml(destName)}</span>
+          </div>
+          <div class="body">
+            ${e.did    ? `<p><strong>Did</strong>${escapeHtml(e.did)}</p>` : ''}
+            ${e.change ? `<p><strong>Change</strong>${escapeHtml(e.change)}</p>` : ''}
+          </div>
+          ${(e.tags && e.tags.length) || e.accessAccuracy || e.dietAccuracy ? `
+            <div class="tags">
+              ${(e.tags || []).map(t => `<span>${escapeHtml(t)}</span>`).join('')}
+              ${e.accessAccuracy ? `<span>Access ${escapeHtml(e.accessAccuracy)}</span>` : ''}
+              ${e.dietAccuracy   ? `<span>Dietary ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
+            </div>` : ''}
+        </article>`;
+    }).join('');
   };
 
   // ---- Profile sheet ----
@@ -893,11 +1324,11 @@ const ui = (() => {
     f.familyNotes.value = p.family.notes || '';
     f.avoid.value = (p.avoid || []).join(', ');
   };
-  const openProfileSheet = (onClose) => {
+  const openProfileSheet = () => {
     const me = auth.current(); if (!me) return;
     writeProfileForm(store.profile.load(me.email));
     $('#sheet-profile').hidden = false;
-    const close = () => { $('#sheet-profile').hidden = true; onClose && onClose(); };
+    const close = () => $('#sheet-profile').hidden = true;
     $$('#sheet-profile [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
     $('#save-profile').onclick = () => { store.profile.save(me.email, readProfileForm()); flash('#save-note', 'Saved.'); };
     $('#reset-profile').onclick = () => {
@@ -907,22 +1338,39 @@ const ui = (() => {
     };
   };
 
-  // ---- Dashboard ----
-  const initDash = () => {
-    $('#btn-change-trip').addEventListener('click', () => {
-      const me = auth.current();
-      store.trip.clear(me.email);
-      location.hash = '';
-      route();
-    });
-    $('#btn-profile').addEventListener('click', () => openProfileSheet(renderDashCurrent));
-    $('#btn-signout').addEventListener('click', () => { auth.signout(); route(); });
+  // ---- Settings sheet ----
+  const openSettings = () => {
+    const f = $('#settings-form');
+    f.openaiKey.value = store.ai.getKey();
+    f.openaiModel.value = store.ai.getModel();
+    $('#sheet-settings').hidden = false;
+    const close = () => $('#sheet-settings').hidden = true;
+    $$('#sheet-settings [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
+    $('#save-settings').onclick = () => {
+      store.ai.setKey(f.openaiKey.value.trim());
+      store.ai.setModel(f.openaiModel.value);
+      flash('#settings-note', ai.hasKey() ? 'Saved. GPT active.' : 'Saved. Local parser will be used.');
+      updateChatHint();
+    };
+    $('#clear-settings').onclick = () => {
+      store.ai.setKey(''); f.openaiKey.value = '';
+      flash('#settings-note', 'Cleared. Local parser will be used.');
+      updateChatHint();
+    };
+  };
+
+  // ---- App shell + routing ----
+  const initApp = () => {
+    $('#btn-new-trip').addEventListener('click', startNewTrip);
+    $('#btn-community').addEventListener('click', () => { location.hash = '#/community'; });
+    $('#btn-profile').addEventListener('click', openProfileSheet);
+    $('#btn-settings').addEventListener('click', openSettings);
+    $('#btn-signout').addEventListener('click', () => { auth.signout(); location.hash = ''; route(); });
     $('#btn-theme').addEventListener('click', toggleTheme);
     $('#side-toggle').addEventListener('click', () => {
-      const d = $('#screen-dash'); d.dataset.navOpen = d.dataset.navOpen === 'true' ? 'false' : 'true';
+      const d = $('#screen-app'); d.dataset.navOpen = d.dataset.navOpen === 'true' ? 'false' : 'true';
     });
 
-    // Packing / discover / local option toggles
     $('#toggle-packing-controls').addEventListener('click', () => { const f = $('#packing-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-packing').addEventListener('click', () => { renderPacking(readPackingReq()); });
     $('#toggle-discover-controls').addEventListener('click', () => { const f = $('#discover-form'); f.hidden = !f.hidden; });
@@ -930,12 +1378,11 @@ const ui = (() => {
     $('#toggle-local-controls').addEventListener('click', () => { const f = $('#local-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-local').addEventListener('click', renderLocal);
 
-    // Group + journal
     $('#add-member').addEventListener('click', () => {
       const me = auth.current(); const f = $('#member-form');
       const name = f.name.value.trim(); if (!name) return;
       const members = store.group.load(me.email);
-      members.push({ id: 'm' + Math.floor(performance.now()), name, ageBand: f.ageBand.value, constraints: parseList(f.constraints.value), vibe: f.vibe.value || '' });
+      members.push({ id: 'm' + performance.now(), name, ageBand: f.ageBand.value, constraints: parseList(f.constraints.value), vibe: f.vibe.value || '' });
       store.group.save(me.email, members); f.reset(); renderMembers();
     });
     $('#members-list').addEventListener('click', (e) => {
@@ -947,7 +1394,7 @@ const ui = (() => {
     $('#add-journal').addEventListener('click', () => {
       const me = auth.current(); const f = $('#journal-form');
       const entry = {
-        id: 'j' + Math.floor(performance.now()),
+        id: 'j' + performance.now(),
         title: f.title.value.trim() || 'Untitled entry',
         did: f.did.value.trim(), change: f.change.value.trim(),
         accessAccuracy: f.accessAccuracy.value, dietAccuracy: f.dietAccuracy.value,
@@ -956,26 +1403,18 @@ const ui = (() => {
       const list = store.journal.load(me.email); list.push(entry); store.journal.save(me.email, list);
       f.reset(); renderJournal(); flash('#journal-note', 'Entry saved.');
     });
-
-    // Route on hash change / nav clicks
-    window.addEventListener('hashchange', showRoute);
-    $$('.side-nav a').forEach(a => a.addEventListener('click', () => {
-      $('#screen-dash').dataset.navOpen = 'false';
-    }));
   };
 
-  // Individual page renderers -------
-  const renderSidebar = (me, trip) => {
-    $('#who-name').textContent = me.name;
-    const dest = DATA.destinations.find(d => d.key === trip.destination);
-    $('#trip-dest').textContent = dest ? dest.name : trip.destination;
-    $('#trip-meta').textContent =
-      `${trip.days} day${trip.days > 1 ? 's' : ''}, ${trip.travelers} traveler${trip.travelers > 1 ? 's' : ''} · ` +
-      (DATA.VIBES.find(v => v.key === trip.primaryVibe)?.title || trip.primaryVibe);
+  // ---- Renderers (unchanged from previous) ----
+  const activeTripFor = (email) => {
+    const trips = store.trips.load(email);
+    const id = store.activeTrip.get(email);
+    return trips.find(t => t.id === id) || trips[trips.length - 1] || null;
   };
 
   const renderItinerary = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email); const profile = store.profile.load(me.email);
+    const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
+    if (!trip) return;
     const dest = DATA.destinations.find(d => d.key === trip.destination);
     const vibe = DATA.VIBES.find(v => v.key === trip.primaryVibe);
     $('#itin-hero').textContent = dest ? dest.name : trip.destination;
@@ -987,7 +1426,6 @@ const ui = (() => {
     $('#badge-days').textContent = `${trip.days} day${trip.days > 1 ? 's' : ''}`;
     $('#badge-travelers').textContent = `${trip.travelers} traveler${trip.travelers > 1 ? 's' : ''}`;
     $('#badge-vibe').textContent = vibe?.title || trip.primaryVibe;
-
     const itin = engine.buildItinerary(trip, profile);
     $('#itinerary-output').innerHTML = itin.days.map((day, i) => `
       <article class="itin-day">
@@ -1008,16 +1446,15 @@ const ui = (() => {
   };
 
   const renderOutfits = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email); const profile = store.profile.load(me.email);
+    const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
+    if (!trip) return;
     const itin = engine.buildItinerary(trip, profile);
-    const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination);
-    // Group pins by day for section headers, but render one big masonry per day.
+    const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
     const byDay = {};
     pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
     const root = $('#outfits-output');
     root.innerHTML = Object.keys(byDay).map(k => {
-      const dayPins = byDay[k];
-      const first = dayPins[0];
+      const dayPins = byDay[k]; const first = dayPins[0];
       return `
         <div class="outfit-day-head">
           <h3>Day ${escapeHtml(k)}${first.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(first.date)}</span>` : ''}</h3>
@@ -1058,7 +1495,7 @@ const ui = (() => {
   };
 
   const readPackingReq = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email); const f = $('#packing-form');
+    const me = auth.current(); const trip = activeTripFor(me.email); const f = $('#packing-form');
     return {
       destination: trip.destination, days: trip.days,
       season: f.season.value, luggage: f.luggage.value,
@@ -1069,8 +1506,7 @@ const ui = (() => {
   const renderPacking = (req) => {
     const me = auth.current();
     if (!req) {
-      // Set defaults from trip on first render
-      const trip = store.trip.load(me.email);
+      const trip = activeTripFor(me.email); if (!trip) return;
       const defaults = { 'live-like-local':['walking-city'], 'iconic-first-visit':['walking-city','museums'],
         'relaxed-scenic':[], 'hidden-gems':['walking-city'], 'family-adventure':['walking-city'],
         'halal-food-culture':['walking-city','religious-sites'], 'luxury-without-rush':['fine-dining'] };
@@ -1095,7 +1531,8 @@ const ui = (() => {
   };
 
   const renderDiscover = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email); const f = $('#discover-form');
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    const f = $('#discover-form');
     const ctx = { destination: trip.destination, hours: f.hours.value, weather: f.weather.value, energy: f.energy.value, party: f.party.value };
     const plans = engine.buildDiscover(ctx, store.profile.load(me.email));
     const dest = DATA.destinations.find(d => d.key === ctx.destination)?.name || ctx.destination;
@@ -1112,7 +1549,8 @@ const ui = (() => {
   };
 
   const renderLocal = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email); const f = $('#local-form');
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    const f = $('#local-form');
     const ctx = { destination: trip.destination, category: f.category.value, mix: $$('[data-chips="local-mix"] input:checked').map(i => i.value) };
     const places = engine.buildLocal(ctx);
     $('#local-output').innerHTML = places.length ? `
@@ -1128,7 +1566,7 @@ const ui = (() => {
   };
 
   const renderExpect = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email);
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
     const dest = DATA.destinations.find(d => d.key === trip.destination);
     const items = engine.buildExpect(trip.destination);
     $('#expect-kicker').textContent = dest?.culturalNote || '';
@@ -1175,7 +1613,6 @@ const ui = (() => {
           <span class="bar"><span style="width:${pct}%"></span></span>
         </div>`;
     }).join('') : `<p class="hint">Nobody has picked a preferred vibe yet.</p>`;
-
     const constraints = engine.consolidateConstraints(members);
     if (!winner) summary.innerHTML = 'Add members with preferred vibes to see the shared direction.';
     else {
@@ -1192,39 +1629,33 @@ const ui = (() => {
         ${e.did    ? `<p><strong>Did.</strong> ${escapeHtml(e.did)}</p>` : ''}
         ${e.change ? `<p><strong>Change.</strong> ${escapeHtml(e.change)}</p>` : ''}
         <div class="meta">
-          ${e.accessAccuracy ? `<span>Access ${escapeHtml(e.accessAccuracy)}</span>` : ''}
-          ${e.dietAccuracy   ? `<span>Dietary ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
+          ${e.accessAccuracy ? `<span>Access: ${escapeHtml(e.accessAccuracy)}</span>` : ''}
+          ${e.dietAccuracy   ? `<span>Dietary: ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
           <span>${e.publicEntry ? 'Public' : 'Private'}</span>
         </div>
       </li>`).join('');
   };
 
-  // Whole-dashboard render used after profile edit or account switch.
-  const renderDashCurrent = () => {
-    const me = auth.current(); const trip = store.trip.load(me.email);
-    if (!me || !trip) return;
-    renderSidebar(me, trip);
-    renderItinerary();
-    renderMembers();
-    renderJournal();
-    // Re-render whatever's currently visible
-    showRoute();
-  };
-
-  // Route handling — one page visible at a time
+  // Route handler for signed-in dashboard
   const showRoute = () => {
-    // If the hash is for a public/auth surface, delegate to the top-level router.
     if ((location.hash || '').startsWith('#/community') || location.hash === '#/auth') { route(); return; }
-    // Only render dashboard pages when the dashboard screen is actually up.
-    if ($('#screen-dash').hidden) return;
+    if ($('#screen-app').hidden) return;
     const me = auth.current(); if (!me) return;
-    const trip = store.trip.load(me.email); if (!trip) return;
 
-    const raw = (location.hash || '#/itinerary').replace(/^#\/?/, '').split('?')[0] || 'itinerary';
-    const known = ['itinerary','outfits','packing','expect','discover','local','group'];
-    const name = known.includes(raw) ? raw : 'itinerary';
+    const raw = (location.hash || '#/chat').replace(/^#\/?/, '').split('?')[0] || 'chat';
+    const known = ['chat','itinerary','outfits','packing','expect','discover','local','group'];
+    const name = known.includes(raw) ? raw : 'chat';
+
+    // If routing to a trip page but no trip active, redirect to chat.
+    const trip = activeTripFor(me.email);
+    const tripPage = ['itinerary','outfits','packing','expect','discover','local','group'].includes(name);
+    if (tripPage && !trip) {
+      history.replaceState(null, '', '#/chat');
+      return showRoute();
+    }
+
     $$('.page').forEach(p => p.hidden = p.dataset.page !== name);
-    $$('.side-nav a').forEach(a => a.classList.toggle('is-active', a.dataset.route === name));
+    $$('#trip-side-nav a').forEach(a => a.classList.toggle('is-active', a.dataset.route === name));
 
     if (name === 'itinerary') renderItinerary();
     if (name === 'outfits')   renderOutfits();
@@ -1233,129 +1664,41 @@ const ui = (() => {
     if (name === 'discover')  renderDiscover();
     if (name === 'local')     renderLocal();
     if (name === 'group')     { renderMembers(); renderJournal(); }
+
+    renderSidebar(me);
     document.querySelector('.content').scrollTo?.(0, 0);
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
-  // ---- Community (public) ----
-  const getCommunityEntries = () => {
-    // Bring together seed entries + any *local* accounts' public journal entries,
-    // so users who publish appear alongside the seeded community feed.
-    const seeds = (DATA.communityEntries || []).map(e => ({ ...e, source: 'seed' }));
-    const localAccounts = store.accounts.all();
-    const local = [];
-    Object.entries(localAccounts).forEach(([email, acc]) => {
-      const j = store.journal.load(email);
-      const trip = store.trip.load(email);
-      j.filter(x => x.publicEntry).forEach(x => {
-        local.push({
-          id: `local-${email}-${x.id}`,
-          authorName: acc.name || email.split('@')[0],
-          destination: trip?.destination || 'unknown',
-          date: x.date || '',
-          title: x.title,
-          did: x.did, change: x.change,
-          accessAccuracy: x.accessAccuracy, dietAccuracy: x.dietAccuracy,
-          tags: [],
-          source: 'local',
-        });
-      });
-    });
-    // Newest first (by date string; safe fallback if empty)
-    return [...seeds, ...local].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  };
-
-  const initPublic = () => {
-    // Populate destination filter from DATA
-    const destSel = $('#public-filter-dest');
-    DATA.destinations.forEach(d => {
-      const o = document.createElement('option');
-      o.value = d.key; o.textContent = `${d.name} — ${d.country}`;
-      destSel.appendChild(o);
-    });
-    destSel.addEventListener('change', renderCommunity);
-    $('#public-filter-tag').addEventListener('change', renderCommunity);
-
-    // The "Sign in" link on public bar goes back to the auth gate.
-    $('#public-signin').addEventListener('click', (e) => {
-      e.preventDefault(); location.hash = '#/auth';
-    });
-    $('#auth-goto-community').addEventListener('click', (e) => {
-      // Anchor click; nothing to do beyond letting the hash change fire the router.
-    });
-  };
-
-  const renderCommunity = () => {
-    // Relabel the top-right button based on session state.
-    const me = auth.current();
-    const btn = $('#public-signin');
-    if (me) { btn.textContent = 'Back to your trip'; btn.setAttribute('href', '#/itinerary'); }
-    else    { btn.textContent = 'Sign in';           btn.setAttribute('href', '#/auth'); }
-
-    const dest = $('#public-filter-dest').value;
-    const tag  = $('#public-filter-tag').value;
-    let entries = getCommunityEntries();
-    if (dest !== 'all') entries = entries.filter(e => e.destination === dest);
-    if (tag  !== 'all') entries = entries.filter(e => (e.tags || []).includes(tag));
-
-    const root = $('#public-entries');
-    if (!entries.length) { root.innerHTML = `<p class="hint">Nothing yet in that view. Try another filter.</p>`; return; }
-    root.innerHTML = entries.map(e => {
-      const destName = DATA.destinations.find(d => d.key === e.destination)?.name || e.destination;
-      return `
-        <article class="pub-entry">
-          <div class="head">
-            <div>
-              <h3>${escapeHtml(e.title)}${e.source === 'local' ? '<span class="badge-local">Yours</span>' : ''}</h3>
-              <div class="author">by ${escapeHtml(e.authorName)}${e.date ? ` · ${escapeHtml(e.date)}` : ''}</div>
-            </div>
-            <span class="dest">${escapeHtml(destName)}</span>
-          </div>
-          <div class="body">
-            ${e.did    ? `<p><strong>Did</strong>${escapeHtml(e.did)}</p>` : ''}
-            ${e.change ? `<p><strong>Change</strong>${escapeHtml(e.change)}</p>` : ''}
-          </div>
-          ${(e.tags && e.tags.length) || e.accessAccuracy || e.dietAccuracy ? `
-            <div class="tags">
-              ${(e.tags || []).map(t => `<span>${escapeHtml(t)}</span>`).join('')}
-              ${e.accessAccuracy ? `<span>Access ${escapeHtml(e.accessAccuracy)}</span>` : ''}
-              ${e.dietAccuracy   ? `<span>Dietary ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
-            </div>` : ''}
-        </article>`;
-    }).join('');
-  };
-
-  // Router: community is always public; otherwise sign-in → setup → dashboard.
   const route = () => {
-    // Community view is public — anyone can browse it.
+    // Public community is always accessible
     if ((location.hash || '').startsWith('#/community')) {
-      renderCommunity();
-      showScreen('public');
-      return;
+      renderCommunity(); showScreen('public'); return;
     }
     const me = auth.current();
-    // Not signed in → auth screen (regardless of hash).
     if (!me) { showScreen('auth'); return; }
-    // Signed in but no trip → setup screen.
-    const trip = store.trip.load(me.email);
-    if (!trip) { setupRender && setupRender(); showScreen('setup'); return; }
-    // Signed in with a trip → dashboard. Ignore #/auth left over from public nav.
-    renderSidebar(me, trip);
+
+    // Migrate legacy single-trip storage
+    store.migrate(me.email);
+
+    // Signed in — always land in the app shell. Chat page if no active trip, else routed page.
     if (!location.hash || location.hash === '#/auth') {
-      history.replaceState(null, '', '#/itinerary');
+      const trip = activeTripFor(me.email);
+      history.replaceState(null, '', trip ? '#/itinerary' : '#/chat');
     }
-    showScreen('dash');
+    renderSidebar(me);
+    showScreen('app');
     showRoute();
   };
 
   return {
     boot: () => {
       applyTheme();
-      populateDestinations();
       initAuth();
-      const s = initSetup(); setupRender = s.render;
-      initDash();
+      initChat();
       initPublic();
+      initApp();
+      autosizeTextarea();
       window.addEventListener('hashchange', route);
       route();
     },
