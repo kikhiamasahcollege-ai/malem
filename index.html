@@ -3,597 +3,574 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>malem — a travel companion that understands you</title>
-<meta name="description" content="Personal travel profile and choose-your-vibe itineraries. Website first, mobile app next." />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%88%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+<title>malem — travel that understands you</title>
+<meta name="description" content="Sign in, tell malem where you're going, and get an itinerary — plus outfits, packing, local guides, and cultural prep — shaped by who you are." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%98%95%3C/text%3E%3C/svg%3E" />
 <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <span class="logo" aria-hidden="true">◐</span>
-    <span class="wordmark">malem</span>
-    <span class="tagline">a travel companion that understands you</span>
-  </div>
-  <nav class="tabs" role="tablist" aria-label="Sections">
-    <button class="tab" role="tab" data-tab="home"     aria-selected="true">Home</button>
-    <button class="tab" role="tab" data-tab="profile"  aria-selected="false">Profile</button>
-    <button class="tab" role="tab" data-tab="vibes"    aria-selected="false">Choose your vibe</button>
-    <button class="tab" role="tab" data-tab="packing"  aria-selected="false">Packing</button>
-    <button class="tab" role="tab" data-tab="discover" aria-selected="false">Discover now</button>
-    <button class="tab" role="tab" data-tab="local"    aria-selected="false">Local</button>
-    <button class="tab" role="tab" data-tab="expect"   aria-selected="false">What to expect</button>
-    <button class="tab" role="tab" data-tab="group"    aria-selected="false">Group &amp; journal</button>
-  </nav>
-</header>
 
-<main>
-
-<section class="panel" data-panel="home">
-  <div class="hero">
-    <h1>Travel that fits <em>you</em>, not the algorithm's idea of you.</h1>
-    <p class="lede">
-      Tell malem what you actually care about — pace, budget, food, faith,
-      family, accessibility, and what to avoid. Then pick a <strong>vibe</strong>
-      and get an itinerary that respects all of it. Every preference is a
-      control you set, not an assumption we make.
-    </p>
-    <div class="cta-row">
-      <button class="btn primary" id="load-demo">Try the demo trip</button>
-      <button class="btn ghost"   data-goto="profile">Set up your own profile</button>
+<!-- 1. AUTH GATE -->
+<div class="gate" id="screen-auth" hidden>
+  <form class="gate-card" id="auth-form" autocomplete="on">
+    <div class="gate-brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span>malem</span>
+      <span class="tag" id="auth-tag">Sign in</span>
     </div>
-    <p class="demo-note" id="demo-note" aria-live="polite"></p>
-  </div>
+    <h1 id="auth-title">Welcome back.</h1>
+    <p class="lede" id="auth-lede">Sign in to pick up your next trip.</p>
 
-  <div class="grid features">
-    <article><h3>1. Personal profile</h3><p>Vibes, budget, pace, dietary, accessibility, religious &amp; cultural, modesty, medical, family, and places to avoid — all editable.</p></article>
-    <article><h3>2. Vibe itineraries</h3><p>Live Like a Local, Iconic First Visit, Hidden Gems, Halal Food &amp; Culture, and more. Pick one, blend two, or slide the vibe.</p></article>
-    <article><h3>3. Packing planner</h3><p>Forecast, activities, laundry, luggage, medication, faith attire, adapters — split into pack, buy, rent, and do-not-pack.</p></article>
-    <article><h3>4. Discover Now</h3><p>Three hours, light rain at six, twelve minutes from a covered market — here are three plans.</p></article>
-    <article><h3>5. Local discovery</h3><p>Small businesses, neighborhood favorites, seasonal events. "Hidden gem" judged by locals, not just popularity.</p></article>
-    <article><h3>6. What to Expect</h3><p>Etiquette, tipping, prayer facilities, transit norms, common scams. Dated, sourced, and labeled by confidence.</p></article>
-    <article><h3>7. Group &amp; journal</h3><p>Collaborators vote on vibes; each traveler gets their own packing list. Publish what you actually did.</p></article>
-  </div>
-</section>
-
-<section class="panel" data-panel="profile" hidden>
-  <div class="section-head">
-    <h2>Your travel profile</h2>
-    <p class="lede">Nothing is inferred. Every field is yours to set, change, or leave blank.</p>
-  </div>
-
-  <form id="profile-form" class="stack" autocomplete="off">
-
-    <fieldset class="card">
-      <legend>Travel vibes</legend>
-      <p class="hint">Multi-select. Weight the trip toward the ones you check.</p>
-      <div class="chips" data-chips="vibes">
-        <label><input type="checkbox" value="relaxed" /><span>Relaxed</span></label>
-        <label><input type="checkbox" value="adventurous" /><span>Adventurous</span></label>
-        <label><input type="checkbox" value="romantic" /><span>Romantic</span></label>
-        <label><input type="checkbox" value="luxury" /><span>Luxury</span></label>
-        <label><input type="checkbox" value="local" /><span>Live like a local</span></label>
-        <label><input type="checkbox" value="family-friendly" /><span>Family-friendly</span></label>
-        <label><input type="checkbox" value="spiritual" /><span>Spiritual</span></label>
-        <label><input type="checkbox" value="nightlife" /><span>Nightlife</span></label>
-        <label><input type="checkbox" value="nature" /><span>Nature</span></label>
-        <label><input type="checkbox" value="food-focused" /><span>Food-focused</span></label>
-      </div>
-    </fieldset>
-
-    <fieldset class="card two-col">
-      <legend>Budget &amp; pace</legend>
-      <label class="field">
-        <span>Budget</span>
-        <select name="budget">
-          <option value="shoestring">Shoestring</option>
-          <option value="mid" selected>Mid-range</option>
-          <option value="comfort">Comfort</option>
-          <option value="luxury">Luxury</option>
-        </select>
+    <div class="stack">
+      <label class="field" id="name-field" hidden>
+        <span>Name</span>
+        <input type="text" name="name" autocomplete="name" placeholder="e.g., Amina" />
       </label>
       <label class="field">
-        <span>Preferred pace</span>
-        <select name="pace">
-          <option value="slow">Slow — one or two things a day</option>
-          <option value="balanced" selected>Balanced</option>
-          <option value="packed">Packed — see as much as possible</option>
-        </select>
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Dietary</legend>
-      <div class="chips" data-chips="dietary-flags">
-        <label><input type="checkbox" data-diet="halal" /><span>Halal</span></label>
-        <label><input type="checkbox" data-diet="kosher" /><span>Kosher</span></label>
-        <label><input type="checkbox" data-diet="vegan" /><span>Vegan</span></label>
-        <label><input type="checkbox" data-diet="vegetarian" /><span>Vegetarian</span></label>
-        <label><input type="checkbox" data-diet="glutenFree" /><span>Gluten-free</span></label>
-      </div>
-      <label class="field">
-        <span>Allergies (comma-separated)</span>
-        <input type="text" name="allergies" placeholder="peanuts, shellfish" />
+        <span>Email</span>
+        <input type="email" name="email" autocomplete="email" required placeholder="you@example.com" />
       </label>
       <label class="field">
-        <span>Other dietary notes</span>
-        <input type="text" name="dietOther" placeholder="no pork, low-sodium…" />
+        <span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" required minlength="4" placeholder="At least 4 characters" />
       </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Accessibility</legend>
-      <div class="chips" data-chips="access-flags">
-        <label><input type="checkbox" data-access="stepFree" /><span>Step-free routes</span></label>
-        <label><input type="checkbox" data-access="lowVision" /><span>Low-vision support</span></label>
-        <label><input type="checkbox" data-access="lowHearing" /><span>Low-hearing support</span></label>
-        <label><input type="checkbox" data-access="seatingBreaks" /><span>Frequent seating breaks</span></label>
-      </div>
-      <label class="field">
-        <span>Notes for planners</span>
-        <input type="text" name="accessNotes" placeholder="powered wheelchair, service animal…" />
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Religious &amp; cultural considerations</legend>
-      <p class="hint">Free text. malem will only use what you write here.</p>
-      <textarea name="religiousCultural" rows="3" placeholder="prayer times, Shabbat, fasting periods, cultural observances…"></textarea>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Modesty preferences</legend>
-      <p class="hint">For your own clothing and for suggested activities.</p>
-      <div class="radio-row">
-        <label><input type="radio" name="modesty" value="no-preference" checked /><span>No preference</span></label>
-        <label><input type="radio" name="modesty" value="modest" /><span>Modest</span></label>
-        <label><input type="radio" name="modesty" value="conservative" /><span>Conservative</span></label>
-      </div>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Medical &amp; medications</legend>
-      <label class="field">
-        <span>Devices &amp; equipment</span>
-        <input type="text" name="medDevices" placeholder="CPAP, insulin pump…" />
-      </label>
-      <label class="field">
-        <span>Medications</span>
-        <input type="text" name="medMedications" placeholder="what needs refrigeration, refill windows…" />
-      </label>
-      <label class="field">
-        <span>Reminder cadence</span>
-        <select name="medCadence">
-          <option value="none">None</option>
-          <option value="daily">Daily</option>
-          <option value="twice-daily">Twice daily</option>
-        </select>
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Family &amp; children</legend>
-      <label class="field">
-        <span>Children's ages (comma-separated)</span>
-        <input type="text" name="childrenAges" placeholder="4, 8" />
-      </label>
-      <label class="field">
-        <label class="inline-check"><input type="checkbox" name="babyOnBoard" /> <span>Traveling with a baby</span></label>
-      </label>
-      <label class="field">
-        <span>Family notes</span>
-        <input type="text" name="familyNotes" placeholder="nap schedule, dietary variations…" />
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Places or activities to avoid</legend>
-      <label class="field">
-        <span>Comma-separated tags</span>
-        <input type="text" name="avoid" placeholder="crowded clubs, extreme heights, seafood markets" />
-      </label>
-    </fieldset>
-
-    <div class="sticky-actions">
-      <button type="button" class="btn primary" id="save-profile">Save profile</button>
-      <button type="button" class="btn ghost"   id="reset-profile">Reset</button>
-      <span class="save-note" id="save-note" aria-live="polite"></span>
     </div>
-  </form>
-</section>
 
-<section class="panel" data-panel="vibes" hidden>
-  <div class="section-head">
-    <h2>Choose your vibe</h2>
-    <p class="lede">
-      Pick one vibe, or blend two. Your profile is applied on top — so a
-      halal-food traveler asking for "Live like a local" gets a local
-      itinerary with halal-friendly stops, not a generic one.
-    </p>
-  </div>
-
-  <form id="vibe-form" class="stack">
-    <fieldset class="card two-col">
-      <legend>Trip basics</legend>
-      <label class="field">
-        <span>Destination</span>
-        <input type="text" name="destination" placeholder="e.g., Istanbul" required />
-      </label>
-      <label class="field">
-        <span>Days</span>
-        <input type="number" name="days" min="1" max="21" value="3" required />
-      </label>
-      <label class="field">
-        <span>Travelers</span>
-        <input type="number" name="travelers" min="1" max="12" value="2" />
-      </label>
-      <label class="field">
-        <span>Arrival date (optional)</span>
-        <input type="date" name="arrivalDate" />
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Primary vibe</legend>
-      <div class="vibe-grid" data-vibe-grid="primary">
-        <!-- populated by JS from a single source of truth -->
-      </div>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Blend a second vibe? <span class="hint inline">Optional.</span></legend>
-      <div class="vibe-grid small" data-vibe-grid="secondary"></div>
-      <label class="field" id="blend-slider-wrap" hidden>
-        <span>Blend ratio — <output id="blend-output">50 / 50</output></span>
-        <input type="range" name="blendRatio" min="0" max="100" value="50" />
-      </label>
-    </fieldset>
-
-    <div class="sticky-actions">
-      <button type="button" class="btn primary" id="build-itinerary">Build itinerary</button>
-      <span class="save-note" id="build-note" aria-live="polite"></span>
+    <div class="form-actions">
+      <button type="submit" class="btn primary" id="auth-submit">Sign in</button>
     </div>
-  </form>
+    <p class="save-note" id="auth-note" aria-live="polite"></p>
 
-  <section id="itinerary-output" hidden></section>
-</section>
-
-<section class="panel" data-panel="packing" hidden>
-  <div class="section-head">
-    <h2>Packing planner</h2>
-    <p class="lede">
-      Forecast, activities, laundry access, medication and mobility needs,
-      faith attire, and local rules all shape the list.
+    <p class="auth-switch" id="auth-switch">
+      New here? <a href="#" id="auth-toggle">Create an account</a>
     </p>
-  </div>
 
-  <form id="packing-form" class="stack">
-    <fieldset class="card two-col">
-      <legend>Trip context</legend>
-      <label class="field">
-        <span>Destination</span>
-        <select name="destination" data-destinations></select>
-      </label>
-      <label class="field">
-        <span>Duration (days)</span>
-        <input type="number" name="days" min="1" max="30" value="5" />
-      </label>
-      <label class="field">
-        <span>Season</span>
-        <select name="season">
-          <option value="spring">Spring</option>
-          <option value="summer" selected>Summer</option>
-          <option value="autumn">Autumn</option>
-          <option value="winter">Winter</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Luggage</span>
-        <select name="luggage">
-          <option value="carry-on">Carry-on only</option>
-          <option value="checked" selected>Carry-on + checked</option>
-          <option value="backpack">Backpack (backpacking)</option>
-        </select>
-      </label>
-      <label class="field">
-        <label class="inline-check"><input type="checkbox" name="laundry" checked /> <span>Laundry available on trip</span></label>
-      </label>
-      <label class="field">
-        <label class="inline-check"><input type="checkbox" name="rentThere" /> <span>Willing to buy/rent locally</span></label>
-      </label>
-    </fieldset>
+    <p class="save-note" style="margin-top:1rem;text-align:center;">
+      Prototype accounts are stored in this browser only.
+      <a href="#" id="try-demo-account">Try the demo account</a>.
+    </p>
+  </form>
+</div>
 
-    <fieldset class="card">
-      <legend>Planned activities</legend>
-      <p class="hint">Multi-select. Shapes clothing, footwear, and gear.</p>
-      <div class="chips" data-chips="activities">
-        <label><input type="checkbox" value="walking-city" /><span>City walking</span></label>
-        <label><input type="checkbox" value="hiking" /><span>Hiking</span></label>
-        <label><input type="checkbox" value="beach" /><span>Beach / swim</span></label>
-        <label><input type="checkbox" value="fine-dining" /><span>Fine dining</span></label>
-        <label><input type="checkbox" value="religious-sites" /><span>Religious sites</span></label>
-        <label><input type="checkbox" value="museums" /><span>Museums</span></label>
-        <label><input type="checkbox" value="cold-weather" /><span>Cold-weather activity</span></label>
-        <label><input type="checkbox" value="tropical" /><span>Tropical / humid</span></label>
-      </div>
-    </fieldset>
-
-    <div class="sticky-actions">
-      <button type="button" class="btn primary" id="build-packing">Build packing list</button>
-      <span class="save-note" id="packing-note" aria-live="polite"></span>
+<!-- 2. TRIP SETUP -->
+<div class="gate setup" id="screen-setup" hidden>
+  <form class="gate-card" id="setup-form" autocomplete="off">
+    <div class="gate-brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span>malem</span>
+      <span class="tag" id="setup-hi">Hello</span>
     </div>
-  </form>
+    <span class="eyebrow">Where next</span>
+    <h1 id="setup-title">Tell us where you're going.</h1>
+    <p class="lede" id="setup-lede">Everything else — itinerary, outfits, packing, local guides — will build from that and your profile.</p>
 
-  <section id="packing-output" hidden></section>
-</section>
-
-<section class="panel" data-panel="discover" hidden>
-  <div class="section-head">
-    <h2>Discover now</h2>
-    <p class="lede">
-      Right here, right now, right weather. Three instantly usable mini-itineraries,
-      not a list of businesses.
-    </p>
-  </div>
-
-  <form id="discover-form" class="stack">
-    <fieldset class="card two-col">
-      <legend>Right now</legend>
-      <label class="field">
-        <span>You're in</span>
-        <select name="destination" data-destinations></select>
-      </label>
-      <label class="field">
-        <span>Available time</span>
-        <select name="hours">
-          <option value="1">About an hour</option>
-          <option value="2">Two hours</option>
-          <option value="3" selected>Three hours</option>
-          <option value="5">Half a day</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Weather</span>
-        <select name="weather">
-          <option value="clear" selected>Clear</option>
-          <option value="light-rain">Light rain</option>
-          <option value="heavy-rain">Heavy rain</option>
-          <option value="hot">Hot &amp; sunny</option>
-          <option value="cold">Cold</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Energy level</span>
-        <select name="energy">
-          <option value="low">Low — sit-down mostly</option>
-          <option value="mid" selected>Balanced</option>
-          <option value="high">High — long walk is fine</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Party</span>
-        <select name="party">
-          <option value="solo">Solo</option>
-          <option value="couple" selected>Couple</option>
-          <option value="family">With kids</option>
-          <option value="friends">Friends</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Budget for this outing</span>
-        <select name="outingBudget">
-          <option value="light">Light</option>
-          <option value="mid" selected>Mid</option>
-          <option value="treat">Treat yourself</option>
-        </select>
-      </label>
-    </fieldset>
-
-    <div class="sticky-actions">
-      <button type="button" class="btn primary" id="build-discover">Show me three plans</button>
-      <span class="save-note" id="discover-note" aria-live="polite"></span>
-    </div>
-  </form>
-
-  <section id="discover-output" hidden></section>
-</section>
-
-<section class="panel" data-panel="local" hidden>
-  <div class="section-head">
-    <h2>Local discovery</h2>
-    <p class="lede">
-      A balanced feed — icons and neighborhood favorites, small businesses
-      and hidden gems. "Hidden gem" is judged by local sentiment and repeat
-      visitors, not raw popularity.
-    </p>
-  </div>
-
-  <form id="local-form" class="stack">
-    <fieldset class="card two-col">
-      <legend>Show me</legend>
-      <label class="field">
-        <span>Destination</span>
-        <select name="destination" data-destinations></select>
-      </label>
-      <label class="field">
-        <span>Category</span>
-        <select name="category">
-          <option value="all" selected>All</option>
-          <option value="food">Food &amp; drink</option>
-          <option value="shopping">Shops &amp; markets</option>
-          <option value="sights">Sights &amp; culture</option>
-          <option value="outdoors">Outdoors</option>
-        </select>
-      </label>
-    </fieldset>
-
-    <fieldset class="card">
-      <legend>Balance</legend>
-      <div class="chips" data-chips="local-mix">
-        <label><input type="checkbox" value="famous" checked /><span>Famous</span></label>
-        <label><input type="checkbox" value="neighborhood" checked /><span>Neighborhood favorites</span></label>
-        <label><input type="checkbox" value="small-business" checked /><span>Small business</span></label>
-        <label><input type="checkbox" value="hidden" checked /><span>Hidden</span></label>
-        <label><input type="checkbox" value="seasonal" checked /><span>Seasonal / events</span></label>
-      </div>
-    </fieldset>
-
-    <div class="sticky-actions">
-      <button type="button" class="btn primary" id="build-local">Show places</button>
-      <span class="save-note" id="local-note" aria-live="polite"></span>
-    </div>
-  </form>
-
-  <section id="local-output" hidden></section>
-</section>
-
-<section class="panel" data-panel="expect" hidden>
-  <div class="section-head">
-    <h2>What to expect</h2>
-    <p class="lede">
-      Practical prep per destination. Every item is dated, sourced, and
-      labeled by confidence — cultural notes explain variation instead of
-      presenting stereotypes as universal.
-    </p>
-  </div>
-
-  <form id="expect-form" class="stack">
-    <fieldset class="card two-col">
-      <legend>Destination</legend>
-      <label class="field">
-        <span>Where are you going?</span>
-        <select name="destination" data-destinations></select>
-      </label>
-    </fieldset>
-  </form>
-
-  <section id="expect-output" hidden></section>
-</section>
-
-<section class="panel" data-panel="group" hidden>
-  <div class="section-head">
-    <h2>Group &amp; journal</h2>
-    <p class="lede">
-      Every traveler brings their own profile snippet — so a group itinerary
-      can respect one person's step-free needs, another's halal diet, and a
-      kid's nap schedule at the same time. After the trip, publish what you
-      actually did.
-    </p>
-  </div>
-
-  <div class="grid two">
-    <section class="card">
-      <h3 class="card-head">Trip members</h3>
-      <p class="hint">Each member's constraints layer onto the shared trip.</p>
-      <ul id="members-list" class="members"></ul>
-
-      <form id="member-form" class="stack member-form">
-        <div class="two-col-inline">
-          <label class="field">
-            <span>Name</span>
-            <input type="text" name="name" placeholder="e.g., Amina" required />
-          </label>
-          <label class="field">
-            <span>Age band</span>
-            <select name="ageBand">
-              <option value="adult" selected>Adult</option>
-              <option value="teen">Teen</option>
-              <option value="child">Child (5–12)</option>
-              <option value="toddler">Toddler / baby</option>
-              <option value="senior">Senior</option>
-            </select>
-          </label>
-        </div>
+    <div class="stack">
+      <div class="two-col">
         <label class="field">
-          <span>Their constraints (comma-separated)</span>
-          <input type="text" name="constraints" placeholder="halal, step-free, medication reminders, kosher, low-hearing…" />
+          <span>Destination</span>
+          <select name="destination" data-destinations required></select>
         </label>
-        <div class="two-col-inline">
+        <label class="field">
+          <span>Arrival date</span>
+          <input type="date" name="arrivalDate" />
+        </label>
+        <label class="field">
+          <span>Days</span>
+          <input type="number" name="days" min="1" max="21" value="4" required />
+        </label>
+        <label class="field">
+          <span>Travelers</span>
+          <input type="number" name="travelers" min="1" max="12" value="2" required />
+        </label>
+      </div>
+
+      <div>
+        <span class="eyebrow" style="display:block;margin-bottom:.35rem;">Vibe</span>
+        <p class="hint" id="vibe-hint">Pick one. Suggestion below is drawn from your saved profile.</p>
+        <div class="vibe-grid" id="setup-vibes"></div>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn ghost" id="setup-edit-profile">Edit profile first</button>
+      <button type="submit" class="btn primary">Generate my trip</button>
+    </div>
+    <p class="save-note" id="setup-note" aria-live="polite"></p>
+
+    <p class="auth-switch">
+      <a href="#" id="setup-signout">Sign out</a>
+    </p>
+  </form>
+</div>
+
+<!-- 3. DASHBOARD -->
+<div id="screen-dash" hidden>
+  <header class="dash-top">
+    <div class="dash-top-row">
+      <div class="dash-brand">
+        <span class="mark" aria-hidden="true"></span>
+        <span>malem</span>
+        <span class="tag" style="color:var(--ink-3); font-family: var(--font-sans); font-size:.75rem; letter-spacing:.14em; text-transform: uppercase; margin-left:.6rem;">Your trip</span>
+      </div>
+      <span class="trip-chip" id="trip-chip">
+        <strong id="trip-dest">—</strong>
+        <span class="sep">·</span>
+        <span id="trip-dates">—</span>
+        <span class="sep">·</span>
+        <span id="trip-vibe">—</span>
+      </span>
+      <div class="actions">
+        <button type="button" class="icon-btn" id="btn-change-trip">Change trip</button>
+        <button type="button" class="icon-btn" id="btn-profile">Profile</button>
+        <button type="button" class="icon-btn" id="btn-theme" aria-label="Toggle theme">Theme</button>
+        <button type="button" class="icon-btn" id="btn-signout">Sign out</button>
+      </div>
+    </div>
+    <nav class="section-nav" aria-label="Sections">
+      <a href="#sec-itinerary">Itinerary</a>
+      <a href="#sec-outfits">Outfits</a>
+      <a href="#sec-packing">Packing</a>
+      <a href="#sec-expect">What to expect</a>
+      <a href="#sec-discover">Discover now</a>
+      <a href="#sec-local">Local</a>
+      <a href="#sec-group">Group &amp; journal</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="section" id="sec-itinerary">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Your itinerary</span>
+          <h2 id="itinerary-title">A plan shaped by who you are</h2>
+        </div>
+        <button type="button" class="btn ghost" id="btn-regenerate">Regenerate</button>
+      </div>
+      <div id="itinerary-output"></div>
+    </section>
+
+    <section class="section" id="sec-outfits">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Outfit inspiration</span>
+          <h2>What to wear, day by day</h2>
+        </div>
+        <span class="aside" id="outfits-aside"></span>
+      </div>
+      <div id="outfits-output" class="outfits"></div>
+    </section>
+
+    <section class="section" id="sec-packing">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Packing planner</span>
+          <h2>What to pack, buy, rent, and skip</h2>
+        </div>
+        <button type="button" class="btn ghost" id="btn-packing-options">Adjust</button>
+      </div>
+      <form id="packing-form" class="card stack" hidden>
+        <div class="two-col">
           <label class="field">
-            <span>Their preferred vibe</span>
-            <select name="vibe">
-              <option value="">(no strong pref)</option>
-              <option value="live-like-local">Live like a local</option>
-              <option value="iconic-first-visit">Iconic first visit</option>
-              <option value="relaxed-scenic">Relaxed &amp; scenic</option>
-              <option value="hidden-gems">Hidden gems</option>
-              <option value="family-adventure">Family adventure</option>
-              <option value="halal-food-culture">Halal food &amp; culture</option>
-              <option value="luxury-without-rush">Luxury without rush</option>
+            <span>Season</span>
+            <select name="season">
+              <option value="spring">Spring</option>
+              <option value="summer">Summer</option>
+              <option value="autumn">Autumn</option>
+              <option value="winter">Winter</option>
             </select>
           </label>
-          <div class="field">
-            <span>&nbsp;</span>
-            <button type="button" class="btn ghost" id="add-member">Add member</button>
+          <label class="field">
+            <span>Luggage</span>
+            <select name="luggage">
+              <option value="carry-on">Carry-on only</option>
+              <option value="checked" selected>Carry-on + checked</option>
+              <option value="backpack">Backpack</option>
+            </select>
+          </label>
+          <label class="field"><label class="inline-check"><input type="checkbox" name="laundry" checked /> <span>Laundry on the trip</span></label></label>
+          <label class="field"><label class="inline-check"><input type="checkbox" name="rentThere" /> <span>OK to buy/rent locally</span></label></label>
+        </div>
+        <div>
+          <span class="eyebrow" style="display:block;margin-bottom:.4rem;">Activities</span>
+          <div class="chips" data-chips="activities">
+            <label><input type="checkbox" value="walking-city" /><span>City walking</span></label>
+            <label><input type="checkbox" value="hiking" /><span>Hiking</span></label>
+            <label><input type="checkbox" value="beach" /><span>Beach / swim</span></label>
+            <label><input type="checkbox" value="fine-dining" /><span>Fine dining</span></label>
+            <label><input type="checkbox" value="religious-sites" /><span>Religious sites</span></label>
+            <label><input type="checkbox" value="museums" /><span>Museums</span></label>
+            <label><input type="checkbox" value="cold-weather" /><span>Cold-weather activity</span></label>
+            <label><input type="checkbox" value="tropical" /><span>Tropical / humid</span></label>
           </div>
         </div>
+        <div>
+          <button type="button" class="btn primary" id="btn-rebuild-packing">Rebuild packing list</button>
+        </div>
       </form>
+      <div id="packing-output"></div>
     </section>
 
-    <section class="card">
-      <h3 class="card-head">Vibe voting</h3>
-      <p class="hint">A blended vibe emerges from what people want.</p>
-      <div id="vote-tally" class="tally"></div>
-      <div id="shared-summary" class="shared-summary"></div>
-    </section>
-  </div>
-
-  <section class="card">
-    <h3 class="card-head">Trip journal</h3>
-    <p class="hint">After the trip. What actually happened is more useful than what was planned.</p>
-
-    <form id="journal-form" class="stack">
-      <label class="field">
-        <span>Entry title</span>
-        <input type="text" name="title" placeholder="Day 2 — the market and the mosque" />
-      </label>
-      <label class="field">
-        <span>What you actually did</span>
-        <textarea name="did" rows="2" placeholder="We swapped the palace visit for the small covered market near…"></textarea>
-      </label>
-      <label class="field">
-        <span>What you'd change next time</span>
-        <textarea name="change" rows="2" placeholder="Skip the afternoon queue at…"></textarea>
-      </label>
-      <div class="two-col-inline">
-        <label class="field">
-          <span>Accessibility accuracy</span>
-          <select name="accessAccuracy">
-            <option value="">—</option>
-            <option value="as-listed">As listed</option>
-            <option value="worse">Worse than listed</option>
-            <option value="better">Better than listed</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Dietary accuracy</span>
-          <select name="dietAccuracy">
-            <option value="">—</option>
-            <option value="as-listed">As listed</option>
-            <option value="worse">Worse than listed</option>
-            <option value="better">Better than listed</option>
-          </select>
-        </label>
+    <section class="section" id="sec-expect">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">What to expect</span>
+          <h2>Cultural, practical, sourced</h2>
+        </div>
+        <span class="aside" id="expect-source"></span>
       </div>
-      <label class="field">
-        <label class="inline-check"><input type="checkbox" name="publicEntry" /> <span>Publish publicly (opt-in only)</span></label>
-      </label>
-      <div class="sticky-actions">
-        <button type="button" class="btn primary" id="add-journal">Add entry</button>
-        <span class="save-note" id="journal-note" aria-live="polite"></span>
+      <div id="expect-output"></div>
+    </section>
+
+    <section class="section" id="sec-discover">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Discover now</span>
+          <h2>Right here, right now</h2>
+        </div>
+        <button type="button" class="btn ghost" id="btn-discover-options">Adjust</button>
+      </div>
+      <form id="discover-form" class="card stack" hidden>
+        <div class="two-col">
+          <label class="field">
+            <span>Time available</span>
+            <select name="hours">
+              <option value="1">About an hour</option>
+              <option value="2">Two hours</option>
+              <option value="3" selected>Three hours</option>
+              <option value="5">Half a day</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Weather</span>
+            <select name="weather">
+              <option value="clear" selected>Clear</option>
+              <option value="light-rain">Light rain</option>
+              <option value="heavy-rain">Heavy rain</option>
+              <option value="hot">Hot &amp; sunny</option>
+              <option value="cold">Cold</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Energy</span>
+            <select name="energy">
+              <option value="low">Low</option>
+              <option value="mid" selected>Balanced</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Party</span>
+            <select name="party">
+              <option value="solo">Solo</option>
+              <option value="couple" selected>Couple</option>
+              <option value="family">With kids</option>
+              <option value="friends">Friends</option>
+            </select>
+          </label>
+        </div>
+        <div><button type="button" class="btn primary" id="btn-rebuild-discover">Get three plans</button></div>
+      </form>
+      <div id="discover-output"></div>
+    </section>
+
+    <section class="section" id="sec-local">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Local discovery</span>
+          <h2>Icons, favorites, small, hidden, seasonal</h2>
+        </div>
+        <button type="button" class="btn ghost" id="btn-local-options">Adjust</button>
+      </div>
+      <form id="local-form" class="card stack" hidden>
+        <div class="two-col">
+          <label class="field">
+            <span>Category</span>
+            <select name="category">
+              <option value="all" selected>All</option>
+              <option value="food">Food &amp; drink</option>
+              <option value="shopping">Shops &amp; markets</option>
+              <option value="sights">Sights &amp; culture</option>
+              <option value="outdoors">Outdoors</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <span class="eyebrow" style="display:block;margin-bottom:.35rem;">Balance</span>
+          <div class="chips" data-chips="local-mix">
+            <label><input type="checkbox" value="famous" checked /><span>Famous</span></label>
+            <label><input type="checkbox" value="neighborhood" checked /><span>Neighborhood</span></label>
+            <label><input type="checkbox" value="small-business" checked /><span>Small business</span></label>
+            <label><input type="checkbox" value="hidden" checked /><span>Hidden</span></label>
+            <label><input type="checkbox" value="seasonal" checked /><span>Seasonal</span></label>
+          </div>
+        </div>
+        <div><button type="button" class="btn primary" id="btn-rebuild-local">Show places</button></div>
+      </form>
+      <div id="local-output"></div>
+    </section>
+
+    <section class="section" id="sec-group">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Group &amp; journal</span>
+          <h2>Everyone's needs, one shared trip</h2>
+        </div>
+      </div>
+      <div class="group-grid">
+        <section class="card">
+          <h3 class="card-head">Trip members</h3>
+          <p class="hint">Each member's constraints layer onto the shared trip.</p>
+          <ul id="members-list" class="members"></ul>
+
+          <form id="member-form" class="stack">
+            <div class="two-col">
+              <label class="field">
+                <span>Name</span>
+                <input type="text" name="name" placeholder="e.g., Amina" required />
+              </label>
+              <label class="field">
+                <span>Age band</span>
+                <select name="ageBand">
+                  <option value="adult" selected>Adult</option>
+                  <option value="teen">Teen</option>
+                  <option value="child">Child (5–12)</option>
+                  <option value="toddler">Toddler / baby</option>
+                  <option value="senior">Senior</option>
+                </select>
+              </label>
+            </div>
+            <label class="field">
+              <span>Their constraints (comma-separated)</span>
+              <input type="text" name="constraints" placeholder="halal, step-free, medication reminders, kosher, low-hearing…" />
+            </label>
+            <div class="two-col">
+              <label class="field">
+                <span>Their preferred vibe</span>
+                <select name="vibe">
+                  <option value="">(no strong pref)</option>
+                  <option value="live-like-local">Live like a local</option>
+                  <option value="iconic-first-visit">Iconic first visit</option>
+                  <option value="relaxed-scenic">Relaxed &amp; scenic</option>
+                  <option value="hidden-gems">Hidden gems</option>
+                  <option value="family-adventure">Family adventure</option>
+                  <option value="halal-food-culture">Halal food &amp; culture</option>
+                  <option value="luxury-without-rush">Luxury without rush</option>
+                </select>
+              </label>
+              <div class="field">
+                <span>&nbsp;</span>
+                <button type="button" class="btn ghost" id="add-member">Add member</button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <h3 class="card-head">Shared vibe</h3>
+          <p class="hint">Emerges from the votes above.</p>
+          <div id="vote-tally" class="tally"></div>
+          <div id="shared-summary" class="shared-summary"></div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:1rem;">
+        <h3 class="card-head">Trip journal</h3>
+        <p class="hint">After the trip — what actually happened is more useful than what was planned.</p>
+
+        <form id="journal-form" class="stack">
+          <label class="field">
+            <span>Entry title</span>
+            <input type="text" name="title" placeholder="Day 2 — the market and the mosque" />
+          </label>
+          <label class="field">
+            <span>What you actually did</span>
+            <textarea name="did" rows="2" placeholder="We swapped the palace visit for the small covered market near…"></textarea>
+          </label>
+          <label class="field">
+            <span>What you'd change next time</span>
+            <textarea name="change" rows="2" placeholder="Skip the afternoon queue at…"></textarea>
+          </label>
+          <div class="two-col">
+            <label class="field">
+              <span>Accessibility accuracy</span>
+              <select name="accessAccuracy">
+                <option value="">—</option>
+                <option value="as-listed">As listed</option>
+                <option value="worse">Worse than listed</option>
+                <option value="better">Better than listed</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Dietary accuracy</span>
+              <select name="dietAccuracy">
+                <option value="">—</option>
+                <option value="as-listed">As listed</option>
+                <option value="worse">Worse than listed</option>
+                <option value="better">Better than listed</option>
+              </select>
+            </label>
+          </div>
+          <label class="field"><label class="inline-check"><input type="checkbox" name="publicEntry" /> <span>Publish publicly (opt-in only)</span></label></label>
+          <div><button type="button" class="btn primary" id="add-journal">Add entry</button>
+            <span class="save-note" id="journal-note" aria-live="polite"></span>
+          </div>
+        </form>
+
+        <ul id="journal-list" class="journal"></ul>
+      </section>
+    </section>
+  </main>
+</div>
+
+<!-- 4. PROFILE SHEET (slide-over) -->
+<aside class="sheet" id="sheet-profile" hidden>
+  <div class="backdrop" data-close-sheet></div>
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <div>
+        <span class="eyebrow">Your profile</span>
+        <h2>What malem should know about you</h2>
+      </div>
+      <button type="button" class="icon-btn" data-close-sheet aria-label="Close">Close</button>
+    </div>
+    <p class="hint">Editable controls only. Nothing is inferred from ethnicity, religion, or demographic.</p>
+
+    <form id="profile-form" class="stack" style="margin-top:1rem;">
+      <fieldset class="fieldset">
+        <legend>Travel vibes</legend>
+        <div class="chips" data-chips="vibes">
+          <label><input type="checkbox" value="relaxed" /><span>Relaxed</span></label>
+          <label><input type="checkbox" value="adventurous" /><span>Adventurous</span></label>
+          <label><input type="checkbox" value="romantic" /><span>Romantic</span></label>
+          <label><input type="checkbox" value="luxury" /><span>Luxury</span></label>
+          <label><input type="checkbox" value="local" /><span>Live like a local</span></label>
+          <label><input type="checkbox" value="family-friendly" /><span>Family-friendly</span></label>
+          <label><input type="checkbox" value="spiritual" /><span>Spiritual</span></label>
+          <label><input type="checkbox" value="nightlife" /><span>Nightlife</span></label>
+          <label><input type="checkbox" value="nature" /><span>Nature</span></label>
+          <label><input type="checkbox" value="food-focused" /><span>Food-focused</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset two-col">
+        <legend>Budget &amp; pace</legend>
+        <label class="field">
+          <span>Budget</span>
+          <select name="budget">
+            <option value="shoestring">Shoestring</option>
+            <option value="mid" selected>Mid-range</option>
+            <option value="comfort">Comfort</option>
+            <option value="luxury">Luxury</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Pace</span>
+          <select name="pace">
+            <option value="slow">Slow</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="packed">Packed</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Dietary</legend>
+        <div class="chips" data-chips="dietary-flags">
+          <label><input type="checkbox" data-diet="halal" /><span>Halal</span></label>
+          <label><input type="checkbox" data-diet="kosher" /><span>Kosher</span></label>
+          <label><input type="checkbox" data-diet="vegan" /><span>Vegan</span></label>
+          <label><input type="checkbox" data-diet="vegetarian" /><span>Vegetarian</span></label>
+          <label><input type="checkbox" data-diet="glutenFree" /><span>Gluten-free</span></label>
+        </div>
+        <label class="field" style="margin-top:.6rem;">
+          <span>Allergies (comma-separated)</span>
+          <input type="text" name="allergies" placeholder="peanuts, shellfish" />
+        </label>
+        <label class="field">
+          <span>Other dietary notes</span>
+          <input type="text" name="dietOther" placeholder="no pork, low-sodium…" />
+        </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Accessibility</legend>
+        <div class="chips" data-chips="access-flags">
+          <label><input type="checkbox" data-access="stepFree" /><span>Step-free routes</span></label>
+          <label><input type="checkbox" data-access="lowVision" /><span>Low-vision support</span></label>
+          <label><input type="checkbox" data-access="lowHearing" /><span>Low-hearing support</span></label>
+          <label><input type="checkbox" data-access="seatingBreaks" /><span>Frequent seating breaks</span></label>
+        </div>
+        <label class="field" style="margin-top:.6rem;">
+          <span>Notes for planners</span>
+          <input type="text" name="accessNotes" placeholder="powered wheelchair, service animal…" />
+        </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Religious &amp; cultural</legend>
+        <textarea name="religiousCultural" rows="3" placeholder="prayer times, Shabbat, fasting periods, cultural observances…"></textarea>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Modesty</legend>
+        <div class="radio-row">
+          <label><input type="radio" name="modesty" value="no-preference" checked /><span>No preference</span></label>
+          <label><input type="radio" name="modesty" value="modest" /><span>Modest</span></label>
+          <label><input type="radio" name="modesty" value="conservative" /><span>Conservative</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Medical &amp; medications</legend>
+        <label class="field">
+          <span>Devices &amp; equipment</span>
+          <input type="text" name="medDevices" placeholder="CPAP, insulin pump…" />
+        </label>
+        <label class="field">
+          <span>Medications</span>
+          <input type="text" name="medMedications" placeholder="what needs refrigeration, refill windows…" />
+        </label>
+        <label class="field">
+          <span>Reminder cadence</span>
+          <select name="medCadence">
+            <option value="none">None</option>
+            <option value="daily">Daily</option>
+            <option value="twice-daily">Twice daily</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Family &amp; children</legend>
+        <label class="field">
+          <span>Children's ages (comma-separated)</span>
+          <input type="text" name="childrenAges" placeholder="4, 8" />
+        </label>
+        <label class="field">
+          <label class="inline-check"><input type="checkbox" name="babyOnBoard" /> <span>Traveling with a baby</span></label>
+        </label>
+        <label class="field">
+          <span>Family notes</span>
+          <input type="text" name="familyNotes" placeholder="nap schedule, dietary variations…" />
+        </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Avoid</legend>
+        <label class="field">
+          <span>Places or activities to avoid (comma-separated tags)</span>
+          <input type="text" name="avoid" placeholder="crowded clubs, extreme heights, seafood markets" />
+        </label>
+      </fieldset>
+
+      <div class="sheet-actions">
+        <button type="button" class="btn primary" id="save-profile">Save profile</button>
+        <button type="button" class="btn ghost"   id="reset-profile">Reset</button>
+        <span class="save-note" id="save-note" aria-live="polite"></span>
       </div>
     </form>
-
-    <ul id="journal-list" class="journal"></ul>
-  </section>
-</section>
-
-</main>
-
-<footer class="foot">
-  <span>malem — website first, mobile app next.</span>
-  <span><a href="./docs/vision.md">Vision</a> · <a href="./docs/data-model.md">Data model</a></span>
-</footer>
+  </div>
+</aside>
 
 <script src="./app.js"></script>
 </body>
