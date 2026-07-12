@@ -704,23 +704,25 @@
         </div>
       </fieldset>
 
-      <!-- Connection: Pinterest -->
-      <fieldset class="conn-tile" data-conn="pinterest">
+      <!-- Pinterest inspiration source (always on) -->
+      <fieldset class="conn-tile" data-conn="pinterest" data-connected="true">
         <legend class="conn-legend">
           <span class="conn-mark" aria-hidden="true">◉</span>
-          <span>Pinterest</span>
-          <span class="conn-status" id="conn-status-pinterest">Not connected</span>
+          <span>Pinterest inspiration</span>
+          <span class="conn-status" id="conn-status-pinterest">Active</span>
         </legend>
-        <p class="hint">Paste a link to any public Pinterest board. Its pins power the Outfit inspiration page, day by day. No developer app, no login required.</p>
+        <p class="hint">
+          Outfit inspiration is pulled from a Pinterest search built from your trip — destination, season, modesty preferences, day vs. evening.
+          It's the same thing you'd see typing "Istanbul outfit inspo" into Pinterest yourself. No login. No account linking.
+        </p>
 
         <label class="field">
-          <span>Public board URL</span>
-          <input type="url" name="pinterestBoardUrl" placeholder="https://www.pinterest.com/yourname/travel-outfits/" autocomplete="off" />
+          <span>Extra style keywords (optional)</span>
+          <input type="text" name="pinterestKeywords" placeholder="vintage, minimalist, boho, streetwear…" autocomplete="off" />
         </label>
-        <p class="hint" style="margin-top:.35rem;">Open your board on Pinterest, copy the URL from the address bar, and paste it here.</p>
+        <p class="hint" style="margin-top:.35rem;">These get appended to the search — e.g. <em>"Istanbul modest summer outfit inspiration vintage"</em>.</p>
 
         <div class="conn-actions">
-          <button type="button" class="btn ghost" id="btn-pinterest-disconnect" hidden>Disconnect</button>
           <span class="save-note" id="pinterest-note" aria-live="polite"></span>
         </div>
       </fieldset>

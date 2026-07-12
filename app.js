@@ -95,8 +95,10 @@ const store = (() => {
       setModel: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel),
     },
     pinterest: {
-      boardUrl: { get: () => localStorage.getItem('malem.pinterestBoardUrl.v1') || '',
-                  set: (v) => v ? localStorage.setItem('malem.pinterestBoardUrl.v1', v) : localStorage.removeItem('malem.pinterestBoardUrl.v1') },
+      extraKeywords: {
+        get: () => localStorage.getItem('malem.pinterestKeywords.v1') || '',
+        set: (v) => v ? localStorage.setItem('malem.pinterestKeywords.v1', v) : localStorage.removeItem('malem.pinterestKeywords.v1'),
+      },
     },
   };
 })();
@@ -541,108 +543,75 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
   return { enabled, hasKey, hasOpenAI, hasClaude, provider, parseTripViaGPT };
 })();
 
-// ---------- pinterest: board URL → RSS via CORS proxy + widget embed ----------
-// No OAuth, no developer app. Users paste any public Pinterest board URL.
+// ---------- pinterest: search Pinterest for outfit inspo (no login, no board) ----------
+// Uses Pinterest's public search URL, scraped through a chain of CORS proxies.
+// Falls back gracefully to Unsplash-by-keyword when Pinterest is unreachable.
 const pinterest = (() => {
-  // Multiple free CORS proxies to try in order. Falls back if one is down.
   const CORS_PROXIES = [
     (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
     (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
     (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
   ];
 
-  const isConnected = () => !!store.pinterest.boardUrl.get();
-
-  // Accepts URLs like https://www.pinterest.com/user/board/ (or with a leading @ etc.)
-  // Returns { user, board, canonical, rss } or null.
-  const parseBoardUrl = (raw) => {
-    if (!raw) return null;
-    let s = String(raw).trim();
-    if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/*/, '');
-    let m;
-    try {
-      const u = new URL(s);
-      if (!/(^|\.)pinterest\.[a-z.]+$/i.test(u.hostname)) return null;
-      // Path: /user/board/  or  /user/board
-      m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/);
-      if (!m) return null;
-    } catch { return null; }
-    const user = decodeURIComponent(m[1]);
-    const board = decodeURIComponent(m[2]);
-    const canonical = `https://www.pinterest.com/${user}/${board}/`;
-    const rss = `https://www.pinterest.com/${user}/${board}.rss`;
-    return { user, board, canonical, rss };
+  // Compose a Pinterest search query from the trip and (optionally) a specific look.
+  // Example: "Istanbul modest summer evening outfit inspiration".
+  const buildQuery = (trip, profile, look) => {
+    const destName = (DATA.destinations.find(d => d.key === trip.destination)?.name || '').toLowerCase();
+    const season = trip.season || '';
+    const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
+    const evening = look && String(look.name || look).toLowerCase().includes('evening');
+    const timeOfDay = evening ? 'evening' : 'daytime';
+    const extra = store.pinterest.extraKeywords.get();
+    const parts = [destName, modest, season, timeOfDay, 'outfit', 'inspiration'];
+    if (extra) parts.push(extra);
+    return parts.filter(Boolean).join(' ');
   };
 
-  const disconnect = () => store.pinterest.boardUrl.set('');
-
-  // Try each proxy in order until one succeeds.
   const fetchThroughProxy = async (targetUrl) => {
     let lastErr;
     for (const build of CORS_PROXIES) {
       try {
-        const res = await fetch(build(targetUrl), { headers: { 'Accept': 'application/rss+xml, text/xml, */*' } });
+        const res = await fetch(build(targetUrl), {
+          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
+        });
         if (!res.ok) { lastErr = new Error(`Proxy HTTP ${res.status}`); continue; }
         const text = await res.text();
-        if (text && text.length > 40) return text;
+        if (text && text.length > 200) return text;
         lastErr = new Error('Empty response from proxy');
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error('All CORS proxies failed.');
   };
 
-  // Parse the board RSS XML for image URLs.
-  const extractImageURLsFromRSS = (xmlText) => {
-    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-    if (doc.querySelector('parsererror')) return [];
-    const urls = [];
-    // <media:content url="..." medium="image"/>
-    doc.querySelectorAll('item').forEach(item => {
-      // media:content (mrss)
-      let el = item.getElementsByTagName('media:content')[0];
-      if (el && el.getAttribute('url')) return urls.push(el.getAttribute('url'));
-      // enclosure
-      el = item.getElementsByTagName('enclosure')[0];
-      if (el && el.getAttribute('url')) return urls.push(el.getAttribute('url'));
-      // description HTML <img src>
-      const descr = item.getElementsByTagName('description')[0]?.textContent || '';
-      const imgMatch = descr.match(/<img[^>]+src=["']([^"']+)["']/i);
-      if (imgMatch) urls.push(imgMatch[1]);
-    });
-    return urls.filter(u => u && /^https?:\/\//.test(u));
+  // Pull Pinterest CDN image URLs out of the HTML.
+  const extractPinImagesFromHTML = (html) => {
+    const set = new Set();
+    // Direct references to i.pinimg.com (Pinterest's image CDN).
+    const patterns = [
+      /https:\/\/i\.pinimg\.com\/[0-9]+x\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
+      /https:\/\/i\.pinimg\.com\/originals\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
+    ];
+    patterns.forEach(p => { (html.match(p) || []).forEach(u => set.add(u)); });
+    // Upscale small results (Pinterest serves multiple sizes at the same path).
+    return [...set].map(u => u.replace(/\/236x\//, '/474x/').replace(/\/60x60_RS\//, '/474x/'));
   };
 
-  // Fetch + cache pin images for the active board.
-  let _pinsCache = { url: null, promise: null };
-  const currentBoardPins = () => {
-    const parsed = parseBoardUrl(store.pinterest.boardUrl.get());
-    if (!parsed) return Promise.resolve([]);
-    if (_pinsCache.url === parsed.canonical && _pinsCache.promise) return _pinsCache.promise;
-    _pinsCache = {
-      url: parsed.canonical,
-      promise: fetchThroughProxy(parsed.rss)
-        .then(extractImageURLsFromRSS)
-        .catch(() => []),
-    };
-    return _pinsCache.promise;
-  };
-  const clearPinsCache = () => { _pinsCache = { url: null, promise: null }; };
+  const searchURL = (query) => `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}&rs=typed`;
 
-  // Widget embed: officialPinterest JS renders the board as a native embed.
-  // Loading it dynamically so we don't include a third-party script until needed.
-  let _widgetLoaded = false;
-  const ensureWidgetScript = () => {
-    if (_widgetLoaded) return;
-    if (document.querySelector('script[data-pinterest-widget]')) { _widgetLoaded = true; return; }
-    const script = document.createElement('script');
-    script.src = 'https://assets.pinterest.com/js/pinit.js';
-    script.async = true; script.defer = true;
-    script.setAttribute('data-pinterest-widget', '1');
-    document.head.appendChild(script);
-    _widgetLoaded = true;
+  // Cache per query so we don't re-fetch on every render.
+  const _cache = new Map(); // query -> Promise<string[]>
+  const searchPins = (query) => {
+    if (!query) return Promise.resolve([]);
+    if (_cache.has(query)) return _cache.get(query);
+    const p = fetchThroughProxy(searchURL(query))
+      .then(extractPinImagesFromHTML)
+      .catch((err) => { console.warn('Pinterest search failed:', err.message); return []; });
+    _cache.set(query, p);
+    return p;
   };
+  const clearCache = () => _cache.clear();
 
-  return { isConnected, parseBoardUrl, disconnect, currentBoardPins, clearPinsCache, ensureWidgetScript };
+  return { buildQuery, searchPins, searchURL, clearCache };
 })();
 
 // ---------- engine ----------
@@ -1523,8 +1492,9 @@ const ui = (() => {
     };
     setStatus('openai',    ai.hasOpenAI());
     setStatus('anthropic', ai.hasClaude());
-    setStatus('pinterest', pinterest.isConnected());
-    $('#btn-pinterest-disconnect').hidden = !pinterest.isConnected();
+    // Pinterest inspiration is always available; label it "Active".
+    const pin = $('#conn-status-pinterest');
+    if (pin) { pin.textContent = 'Active'; pin.closest('.conn-tile')?.setAttribute('data-connected', 'true'); }
   };
 
   const openSettings = () => {
@@ -1537,8 +1507,7 @@ const ui = (() => {
     const provRadio = $(`input[name="aiProvider"][value="${prov}"]`);
     if (provRadio) provRadio.checked = true;
 
-    f.pinterestBoardUrl.value = store.pinterest.boardUrl.get();
-    $('#btn-pinterest-disconnect').hidden = !pinterest.isConnected();
+    f.pinterestKeywords.value = store.pinterest.extraKeywords.get();
 
     refreshConnectionStatuses();
 
@@ -1554,33 +1523,15 @@ const ui = (() => {
       const prov = ($('input[name="aiProvider"]:checked') || {}).value || 'auto';
       store.ai.provider.set(prov);
 
-      const rawUrl = f.pinterestBoardUrl.value.trim();
-      if (rawUrl) {
-        const parsed = pinterest.parseBoardUrl(rawUrl);
-        if (!parsed) {
-          flash('#pinterest-note', "That doesn't look like a valid Pinterest board URL (expected pinterest.com/user/board/).");
-          return;
-        }
-        store.pinterest.boardUrl.set(parsed.canonical);
-        pinterest.clearPinsCache();
-        flash('#pinterest-note', `Board saved: @${parsed.user} / ${parsed.board}`);
-      } else {
-        store.pinterest.boardUrl.set('');
-      }
+      const newKw = f.pinterestKeywords.value.trim();
+      const oldKw = store.pinterest.extraKeywords.get();
+      store.pinterest.extraKeywords.set(newKw);
+      if (newKw !== oldKw) pinterest.clearCache();
 
       refreshConnectionStatuses();
       const p = ai.provider();
-      flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.') + (pinterest.isConnected() ? ' Pinterest board connected.' : ''));
+      flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.'));
       updateChatHint();
-    };
-
-    $('#btn-pinterest-disconnect').onclick = () => {
-      pinterest.disconnect();
-      pinterest.clearPinsCache();
-      f.pinterestBoardUrl.value = '';
-      refreshConnectionStatuses();
-      $('#btn-pinterest-disconnect').hidden = true;
-      flash('#pinterest-note', 'Disconnected.');
     };
   };
 
@@ -1676,38 +1627,41 @@ const ui = (() => {
     const itin = engine.buildItinerary(trip, profile);
     const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
 
-    // If a Pinterest board URL is set, fetch its pins (via CORS proxy → RSS)
-    // and use them to fill the day-by-day layout. Also embed the board widget
-    // above the per-day looks.
-    const parsedBoard = pinterest.parseBoardUrl(store.pinterest.boardUrl.get());
-    let boardPinURLs = [];
-    if (parsedBoard) {
-      try { boardPinURLs = await pinterest.currentBoardPins(); } catch (e) { console.warn(e); }
-      if (boardPinURLs.length) {
-        pins.forEach((p, i) => { p.img = boardPinURLs[i % boardPinURLs.length]; });
-        $('#outfits-source').textContent = `Imagery: pins from pinterest.com/${parsedBoard.user}/${parsedBoard.board}/`;
-      } else {
-        $('#outfits-source').textContent = 'Imagery: Unsplash by keyword — the CORS proxy for your Pinterest board is unavailable right now.';
-      }
+    // Build one Pinterest search per unique "look name" so day looks and evening
+    // looks pull from different, on-topic searches. Fetches in parallel.
+    const queryFor = (p) => pinterest.buildQuery(trip, profile, { name: p.look || p.name });
+    const uniqueQueries = Array.from(new Set(pins.map(queryFor)));
+    const pools = new Map();
+    await Promise.all(uniqueQueries.map(async q => { pools.set(q, await pinterest.searchPins(q)); }));
+
+    let pinterestHits = 0;
+    const cursorByQuery = new Map();
+    pins.forEach(p => {
+      const q = queryFor(p);
+      const pool = pools.get(q) || [];
+      if (!pool.length) return;
+      const cur = cursorByQuery.get(q) || 0;
+      p.img = pool[cur % pool.length];
+      cursorByQuery.set(q, cur + 1);
+      pinterestHits++;
+    });
+
+    // Update the small source note under the page hero.
+    const primaryQuery = queryFor(pins[0] || { look: '' });
+    const primarySearchUrl = pinterest.searchURL(primaryQuery);
+    if (pinterestHits > 0) {
+      $('#outfits-source').innerHTML =
+        `Imagery: <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Pinterest search results</a> for "${escapeHtml(primaryQuery)}". Change the keywords in Settings → Pinterest.`;
     } else {
-      $('#outfits-source').textContent = 'Imagery: Unsplash by keyword. Paste a Pinterest board URL in Settings → Pinterest to use your own pins.';
+      $('#outfits-source').innerHTML =
+        `Pinterest search was unreachable just now — showing Unsplash-by-keyword tiles instead. <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Open the search on Pinterest ↗</a>`;
     }
+
     const byDay = {};
     pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
     const root = $('#outfits-output');
 
-    // Native Pinterest widget embed at the top (if a board is set).
-    const embedHtml = parsedBoard ? `
-      <section class="pinterest-embed">
-        <span class="eyebrow">Your inspiration board</span>
-        <a data-pin-do="embedBoard"
-           data-pin-board-width="800"
-           data-pin-scale-height="240"
-           data-pin-scale-width="115"
-           href="${escapeHtml(parsedBoard.canonical)}">${escapeHtml(parsedBoard.canonical)}</a>
-      </section>` : '';
-
-    root.innerHTML = embedHtml + Object.keys(byDay).map(k => {
+    root.innerHTML = Object.keys(byDay).map(k => {
       const dayPins = byDay[k]; const first = dayPins[0];
       return `
         <div class="outfit-day-head">
@@ -1747,13 +1701,6 @@ const ui = (() => {
         </div>`;
     }).join('');
 
-    // Bring the Pinterest widget script in and (re-)build embeds after render.
-    if (parsedBoard) {
-      pinterest.ensureWidgetScript();
-      if (window.PinUtils && typeof window.PinUtils.build === 'function') {
-        try { window.PinUtils.build(); } catch (e) { /* first-load will process automatically */ }
-      }
-    }
   };
 
   const readPackingReq = () => {
