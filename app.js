@@ -84,10 +84,14 @@ const store = (() => {
                       set: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel) },
       claudeKey:    { get: () => localStorage.getItem('malem.anthropicKey.v1') || '',
                       set: (k) => k ? localStorage.setItem('malem.anthropicKey.v1', k) : localStorage.removeItem('malem.anthropicKey.v1') },
-      claudeModel:  { get: () => localStorage.getItem('malem.anthropicModel.v1') || 'claude-3-5-sonnet-latest',
+      claudeModel:  { get: () => localStorage.getItem('malem.anthropicModel.v1') || 'claude-sonnet-5',
                       set: (m) => m ? localStorage.setItem('malem.anthropicModel.v1', m) : localStorage.removeItem('malem.anthropicModel.v1') },
       provider:     { get: () => localStorage.getItem('malem.aiProvider.v1') || 'auto',
                       set: (p) => p ? localStorage.setItem('malem.aiProvider.v1', p) : localStorage.removeItem('malem.aiProvider.v1') },
+      openrouterKey:   { get: () => localStorage.getItem('malem.openrouterKey.v1') || '',
+                         set: (k) => k ? localStorage.setItem('malem.openrouterKey.v1', k) : localStorage.removeItem('malem.openrouterKey.v1') },
+      openrouterModel: { get: () => localStorage.getItem('malem.openrouterModel.v1') || 'google/gemini-3.5-flash',
+                         set: (m) => m ? localStorage.setItem('malem.openrouterModel.v1', m) : localStorage.removeItem('malem.openrouterModel.v1') },
       // Back-compat for older callers:
       getKey:   () => localStorage.getItem(K.openaiKey) || '',
       setKey:   (k) => k ? localStorage.setItem(K.openaiKey, k) : localStorage.removeItem(K.openaiKey),
@@ -440,12 +444,15 @@ const parser = (() => {
 const ai = (() => {
   const hasOpenAI = () => !!store.ai.openaiKey.get();
   const hasClaude = () => !!store.ai.claudeKey.get();
-  const enabled = () => hasOpenAI() || hasClaude();
+  const hasOpenRouter = () => !!store.ai.openrouterKey.get();
+  const enabled = () => hasOpenRouter() || hasOpenAI() || hasClaude();
   const provider = () => {
     const pref = store.ai.provider.get();
+    if (pref === 'openrouter' && hasOpenRouter()) return 'openrouter';
     if (pref === 'openai' && hasOpenAI()) return 'openai';
     if (pref === 'claude' && hasClaude()) return 'claude';
-    // Auto: prefer Claude when both are present.
+    // Auto: prefer OpenRouter, then Claude, then OpenAI.
+    if (hasOpenRouter()) return 'openrouter';
     if (hasClaude()) return 'claude';
     if (hasOpenAI()) return 'openai';
     return null;
@@ -457,7 +464,7 @@ Given the user's free-form description of a trip, return STRICT JSON with:
 {
   "reply": "one short conversational reply, first person, warm, under 40 words",
   "trip": {
-    "destination": "istanbul" | "kyoto" | "marrakech" | "paris" | "nyc" | null,
+    "destination": "a lowercase slug of ANY city, region, or country the user names (e.g. \"istanbul\", \"lisbon\", \"kyoto\", \"amalfi-coast\"), or null if none is given",
     "days": integer or null,
     "travelers": integer or null,
     "arrivalDate": "YYYY-MM-DD" or null,
@@ -477,7 +484,7 @@ Given the user's free-form description of a trip, return STRICT JSON with:
   "missing": [string]
 }
 
-If destination is not one of the five, set destination null and put a friendly clarifying question in "reply".
+If no destination is mentioned, set destination null and put a friendly clarifying question in "reply".
 Never invent constraints the user didn't state. Fields not stated → null / false / empty.
 Respond with ONLY the JSON object — no prose, no code fences.`;
 
@@ -503,44 +510,260 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
     return JSON.parse(data.choices[0].message.content);
   };
 
-  const askClaude = async (userInput) => {
+  // Anthropic-hosted web search tool. Claude runs the searches itself; results
+  // come back in the same response, so there's no client-side tool loop to run.
+  const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 8 };
+
+  // Collect text across all content blocks (a web-search turn interleaves
+  // server_tool_use / web_search_tool_result blocks between the text blocks).
+  const collectText = (content) => (content || [])
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('\n');
+
+  // One Claude JSON call, with an optional server-side tool loop (pause_turn).
+  const claudeJSON = async ({ system, user, tools, maxTokens }) => {
     const key = store.ai.claudeKey.get();
     if (!key) throw new Error('No Anthropic key set.');
     const model = store.ai.claudeModel.get();
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userInput }],
-      }),
-    });
-    if (!res.ok) throw new Error(`Anthropic HTTP ${res.status}`);
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '';
+    const messages = [{ role: 'user', content: user }];
+    let data, guard = 0;
+    do {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens || 1024,
+          system,
+          ...(tools ? { tools } : {}),
+          messages,
+        }),
+      });
+      if (!res.ok) throw new Error(`Anthropic HTTP ${res.status} — ${await res.text().catch(() => '')}`.slice(0, 300));
+      data = await res.json();
+      if (data.stop_reason === 'pause_turn') messages.push({ role: 'assistant', content: data.content });
+    } while (data.stop_reason === 'pause_turn' && ++guard < 6);
+
+    const text = collectText(data.content);
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Claude returned no JSON object.');
     return JSON.parse(jsonMatch[0]);
   };
 
+  // Fast structured parse of the chat message (no web search needed).
+  const askClaude = (userInput) => claudeJSON({ system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024 });
+
+  // OpenRouter (OpenAI-compatible, CORS-friendly, routes to any model).
+  // Append ":online" to the model to enable OpenRouter's built-in web search.
+  const openRouterJSON = async ({ model, system, user, maxTokens }) => {
+    const key = store.ai.openrouterKey.get();
+    if (!key) throw new Error('No OpenRouter key set.');
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`,
+        'HTTP-Referer': location.origin,
+        'X-Title': 'malem',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        max_tokens: maxTokens || 1024,
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300);
+      if (res.status === 401) throw new Error('OpenRouter 401 — that key is invalid. Re-check it in Settings.');
+      if (res.status === 402) throw new Error('OpenRouter 402 — out of credits. Top up at openrouter.ai/credits.');
+      if (res.status === 429) throw new Error('OpenRouter 429 — rate-limited; wait a moment and retry.');
+      throw new Error(`OpenRouter HTTP ${res.status} — ${body}`);
+    }
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('OpenRouter returned no JSON object.');
+    return JSON.parse(m[0]);
+  };
+
+  const askOpenRouter = (userInput) =>
+    openRouterJSON({ model: store.ai.openrouterModel.get(), system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024 });
+
   const parseTripViaGPT = async (userInput) => {
     const p = provider();
+    if (p === 'openrouter') return await askOpenRouter(userInput);
     if (p === 'claude') return await askClaude(userInput);
     if (p === 'openai') return await askOpenAI(userInput);
     throw new Error('No AI provider configured.');
   };
 
+  // ---- Full trip generation: web-grounded, weather-aware, profile-personalized ----
+  const GEN_SYSTEM = `You are malem, an expert travel planner. Find REAL, specific, named places (restaurants, shops, sights, neighborhoods, markets) — use the web_search tool when one is available, otherwise draw on your best knowledge of the destination — and account for opening hours, seasonal closures, and events during the trip window. Personalize everything to the traveler's profile (dietary, accessibility, modesty, medical, family, budget, pace, and things to avoid) and to the provided live weather. Prefer specific named places with a one-line reason over generic advice; favor small businesses and genuine local gems, not just the top tourist hits.
+
+Return STRICT JSON ONLY — no prose, no code fences, no citation text — matching EXACTLY this shape:
+{
+  "destinationMeta": {
+    "key": "lowercase-slug",
+    "name": "Proper Place Name",
+    "country": "Country",
+    "plug": "one warm sentence about the place",
+    "culturalNote": "one sentence a first-time visitor should know",
+    "palette": ["#hex","#hex","#hex","#hex","#hex"],
+    "paletteNote": "a few words on the palette"
+  },
+  "itinerary": {
+    "respectedFromProfile": ["short phrases naming which profile constraints shaped the plan"],
+    "days": [
+      { "date": "YYYY-MM-DD or empty string", "theme": "short day theme",
+        "blocks": [ { "time": "HH:MM", "title": "Specific, real, named place or activity", "duration": "e.g. 90 min", "kind": "meal|sight|activity|rest|transit|shopping", "respects": ["profile fields this honored, optional"] } ] }
+    ]
+  },
+  "expect": [ { "key": "etiquette|clothing|tipping|prayer|driving|transit|scams|safety|accessibility|phrases|hours|photos|difference", "label": "Human label", "text": "1-2 practical sentences", "confidence": "high|med", "updated": "YYYY-MM", "source": "web or local knowledge" } ],
+  "local": [ { "name": "Real named place", "mix": "famous|small-business|neighborhood|hidden|seasonal", "sub": "what it is, one line", "gemScore": "short note on why it's worth it", "trafficNote": "short note on crowds/best timing" } ],
+  "packing": {
+    "lists": [
+      {"title":"Pack from home","items":[{"item":"...","why":"..."}],"tone":"good"},
+      {"title":"Buy before leaving","items":[{"item":"...","why":"..."}],"tone":""},
+      {"title":"Buy or rent there","items":[{"item":"...","why":"..."}],"tone":""},
+      {"title":"Carry in your personal bag","items":[{"item":"...","why":"..."}],"tone":"good"},
+      {"title":"Do not pack","items":[{"item":"...","why":"..."}],"tone":"warn"},
+      {"title":"Before departure","items":[{"item":"...","why":"..."}],"tone":""}
+    ],
+    "reminders": [ {"when":"Two weeks before","text":"..."}, {"when":"Three days before","text":"..."}, {"when":"Night before","text":"..."}, {"when":"Morning of","text":"..."} ]
+  }
+}
+Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cover all 13 keys. Weather must visibly shape clothing, packing, and outdoor timing. Never invent profile constraints the traveler did not state.`;
+
+  const buildGenUser = (trip, profile, weatherObj) => {
+    const wxLine = (weatherObj && weatherObj.days && weatherObj.days.length)
+      ? `${weather.describe(weatherObj)}\nDaily: ${weatherObj.days.map(d => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C ${d.summary} ${d.precip ?? 0}% rain`).join('; ')}`
+      : 'No live forecast available — use seasonal norms.';
+    return [
+      `Trip: ${trip.days} day(s) in "${trip.destination}"${trip.arrivalDate ? `, arriving ${trip.arrivalDate}` : ''}, ${trip.travelers || 1} traveler(s).`,
+      `Chosen vibe: ${trip.primaryVibe || 'unspecified'}. Season: ${trip.season || 'unspecified'}.`,
+      `Live weather (Open-Meteo): ${wxLine}`,
+      `Traveler profile — honor ALL of this and reference it in "respectedFromProfile":\n${JSON.stringify(profile)}`,
+      `Now produce the complete JSON bundle for this trip.`,
+    ].join('\n\n');
+  };
+
+  // Claude: web-grounded generation via the server-side web_search tool.
+  const generateViaClaude = (trip, profile, weatherObj) =>
+    claudeJSON({ system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), tools: [WEB_SEARCH_TOOL], maxTokens: 16000 });
+
+  // OpenAI (GPT): generates from the model's knowledge of real places + the live weather we inject.
+  const generateViaOpenAI = async (trip, profile, weatherObj) => {
+    const key = store.ai.openaiKey.get();
+    if (!key) throw new Error('No OpenAI key set.');
+    const model = store.ai.openaiModel.get();
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: GEN_SYSTEM },
+          { role: 'user', content: buildGenUser(trip, profile, weatherObj) },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 8000,
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300);
+      if (res.status === 429) throw new Error('OpenAI 429 — your key is out of quota or rate-limited. Add billing/credits at platform.openai.com (Settings → Billing), then try again.');
+      if (res.status === 401) throw new Error('OpenAI 401 — that API key is invalid. Re-check it in Settings.');
+      throw new Error(`OpenAI HTTP ${res.status} — ${body}`);
+    }
+    const data = await res.json();
+    return JSON.parse(data.choices[0].message.content);
+  };
+
+  // OpenRouter: web-grounded generation via the ":online" model suffix (built-in web search).
+  const generateViaOpenRouter = (trip, profile, weatherObj) => {
+    const base = store.ai.openrouterModel.get();
+    const model = base.includes(':') ? base : `${base}:online`; // enable web search unless already suffixed
+    return openRouterJSON({ model, system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), maxTokens: 8000 });
+  };
+
+  const generateTrip = async (trip, profile, weatherObj) => {
+    const p = provider();
+    if (p === 'openrouter') return await generateViaOpenRouter(trip, profile, weatherObj);
+    if (p === 'claude') return await generateViaClaude(trip, profile, weatherObj);
+    if (p === 'openai') return await generateViaOpenAI(trip, profile, weatherObj);
+    return null;
+  };
+
   // Legacy alias
   const hasKey = enabled;
 
-  return { enabled, hasKey, hasOpenAI, hasClaude, provider, parseTripViaGPT };
+  return { enabled, hasKey, hasOpenAI, hasClaude, hasOpenRouter, provider, parseTripViaGPT, generateTrip };
+})();
+
+// ---------- weather: live forecast via Open-Meteo (free, no API key, CORS-open) ----------
+const weather = (() => {
+  const CODES = { 0:'clear', 1:'mainly clear', 2:'partly cloudy', 3:'overcast', 45:'fog', 48:'freezing fog',
+    51:'light drizzle', 53:'drizzle', 55:'heavy drizzle', 56:'freezing drizzle', 57:'freezing drizzle',
+    61:'light rain', 63:'rain', 65:'heavy rain', 66:'freezing rain', 67:'freezing rain',
+    71:'light snow', 73:'snow', 75:'heavy snow', 77:'snow grains',
+    80:'rain showers', 81:'rain showers', 82:'violent rain showers', 85:'snow showers', 86:'snow showers',
+    95:'thunderstorm', 96:'thunderstorm with hail', 99:'thunderstorm with hail' };
+  const codeText = (c) => CODES[c] ?? 'mixed';
+
+  const geocode = async (place) => {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Geocoding HTTP ${r.status}`);
+    const j = await r.json();
+    return (j.results && j.results[0]) || null;
+  };
+
+  // Live daily forecast for a free-text place. Open-Meteo covers ~16 days out;
+  // for trips further ahead this returns the nearest window as a seasonal proxy.
+  const forecast = async (place, days = 7) => {
+    const g = await geocode(place);
+    if (!g) return null;
+    const n = Math.min(Math.max(days || 3, 1), 16);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${g.latitude}&longitude=${g.longitude}`
+      + `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code`
+      + `&forecast_days=${n}&timezone=auto`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Forecast HTTP ${r.status}`);
+    const j = await r.json();
+    const d = j.daily || {};
+    const list = (d.time || []).map((date, i) => ({
+      date,
+      max: d.temperature_2m_max?.[i],
+      min: d.temperature_2m_min?.[i],
+      precip: d.precipitation_probability_max?.[i],
+      code: d.weather_code?.[i],
+      summary: codeText(d.weather_code?.[i]),
+    }));
+    return { place: g.name, country: g.country || '', admin: g.admin1 || '',
+      lat: g.latitude, lon: g.longitude, timezone: j.timezone || 'auto', days: list };
+  };
+
+  // Compact human/LLM-readable summary line.
+  const describe = (w) => {
+    if (!w || !w.days || !w.days.length) return '';
+    const mins = w.days.map(d => d.min).filter(Number.isFinite);
+    const maxs = w.days.map(d => d.max).filter(Number.isFinite);
+    if (!mins.length || !maxs.length) return '';
+    const lo = Math.round(Math.min(...mins)), hi = Math.round(Math.max(...maxs));
+    const wet = w.days.filter(d => (d.precip || 0) >= 40).length;
+    const conds = w.days.map(d => d.summary);
+    const common = conds.slice().sort((a, b) =>
+      conds.filter(v => v === b).length - conds.filter(v => v === a).length)[0];
+    return `${lo}–${hi}°C, mostly ${common}${wet ? `, rain likely on ${wet} day${wet > 1 ? 's' : ''}` : ''}.`;
+  };
+
+  return { forecast, describe, codeText, geocode };
 })();
 
 // ---------- pinterest: search Pinterest for outfit inspo (no login, no board) ----------
@@ -556,7 +779,7 @@ const pinterest = (() => {
   // Compose a Pinterest search query from the trip and (optionally) a specific look.
   // Example: "Istanbul modest summer evening outfit inspiration".
   const buildQuery = (trip, profile, look) => {
-    const destName = (DATA.destinations.find(d => d.key === trip.destination)?.name || '').toLowerCase();
+    const destName = (trip.bundle?.destinationMeta?.name || DATA.destinations.find(d => d.key === trip.destination)?.name || trip.destination || '').toString().toLowerCase();
     const season = trip.season || '';
     const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
     const evening = look && String(look.name || look).toLowerCase().includes('evening');
@@ -910,16 +1133,19 @@ const engine = (() => {
   }[vibe] || ['minimal','editorial']);
 
   // Unsplash Source URL (no key required). Random matching photo per keyword set.
-  const unsplashURL = (keywords, w = 480, h = 600) =>
-    `https://source.unsplash.com/${w}x${h}/?${encodeURIComponent(keywords.filter(Boolean).join(','))}`;
+  // Keyless topical imagery (Unsplash Source was retired). loremflickr matches by tag;
+  // a stable `lock` keeps each tile's image consistent across renders.
+  const stockURL = (keywords, w = 480, h = 600, lock = 1) =>
+    `https://loremflickr.com/${w}/${h}/${encodeURIComponent(keywords.filter(Boolean).slice(0, 2).join(','))}?lock=${lock}`;
 
   const buildOutfits = (itinerary, profile, season, destinationKey, trip) => {
     const s = seasonInfo(season);
     const modest = profile.modesty !== 'no-preference';
     const family = (profile.family.childrenAges || []).length || profile.family.babyOnBoard;
     const styleWords = vibeStyleKeywords(trip.primaryVibe);
-    const palette = (DATA.destinations.find(d => d.key === destinationKey)?.palette) || ['#E4D9BC','#8E6E4C','#1F1C15','#D5C7A6','#5C4232'];
-    const destName = (DATA.destinations.find(d => d.key === destinationKey)?.name || '').toLowerCase();
+    const palette = (trip?.bundle?.destinationMeta?.palette?.length ? trip.bundle.destinationMeta.palette
+      : DATA.destinations.find(d => d.key === destinationKey)?.palette) || ['#E4D9BC','#8E6E4C','#1F1C15','#D5C7A6','#5C4232'];
+    const destName = (trip?.bundle?.destinationMeta?.name || DATA.destinations.find(d => d.key === destinationKey)?.name || '').toLowerCase();
 
     const pick = (arr, i) => arr[i % arr.length];
 
@@ -1001,7 +1227,7 @@ const engine = (() => {
       pins.push({
         kind: 'look', dayIndex: look.dayIndex, date: look.date, theme: look.theme,
         look: look.name, why: look.why, items: look.items,
-        img: unsplashURL(heroKeywords(look), 520, 640),
+        img: stockURL(['fashion', 'outfit'], 520, 640, looki + 1),
         toneA: palette[looki % palette.length],
         toneB: palette[(looki + 3) % palette.length],
         ar: pick(['3/4', '4/5', '2/3'], looki),
@@ -1013,7 +1239,7 @@ const engine = (() => {
         pins.push({
           kind: 'piece', dayIndex: look.dayIndex, date: look.date, theme: look.theme,
           look: look.name, part: item.part, value: item.value,
-          img: unsplashURL(partKeywords(partName, look), 420, 500),
+          img: stockURL(['fashion', partName.toLowerCase()], 420, 500, (looki * 3) + ki + 2),
           toneA: palette[(looki + ki + 1) % palette.length],
           toneB: palette[(looki + ki + 4) % palette.length],
           ar: pick(['4/5', '1/1', '3/4'], looki + ki),
@@ -1180,42 +1406,64 @@ const ui = (() => {
     appendChatMessage('user', text);
     appendChatMessage('assistant', 'Reading your trip…', { pending: true });
 
-    let result = null; let usedGPT = false;
+    // 1) Parse the message into a trip request + profile preferences.
+    let result = null;
     if (ai.enabled()) {
       try {
         const gpt = await ai.parseTripViaGPT(text);
-        usedGPT = true;
         result = { trip: gpt.trip, prefs: gpt.profile, reply: gpt.reply, missing: gpt.missing || [], inferred: [] };
-        // Convert GPT profile schema to internal profile fields we merge later
-      } catch (err) { console.error('GPT failed, falling back to local parser', err); }
+      } catch (err) { console.error('AI parse failed, falling back to local parser', err); }
     }
     if (!result) {
       const local = parser.parseTrip(text);
       result = { trip: local.trip, prefs: local.prefs, missing: local.missing, inferred: local.inferred };
     }
 
-    removePendingMessage();
-    if (!result.trip || result.missing.includes('destination')) {
+    if (!result.trip || !result.trip.destination || (result.missing || []).includes('destination')) {
+      removePendingMessage();
       appendChatMessage('assistant',
-        (result.reply || `I couldn't pin down which destination. malem's demo currently supports Istanbul, Kyoto, Marrakech, Paris, and New York. Which one?`));
+        (result.reply || `Which destination are you thinking of? Tell me the place and roughly how many days, and I'll build the plan.`));
       return;
     }
 
-    // Merge profile: parsed prefs layered onto the user's saved profile
+    // 2) Merge parsed preferences onto the saved profile (this is the AI's "memory").
     const existing = store.profile.load(me.email);
     const merged = parser.mergeProfile(existing, result.prefs);
     store.profile.save(me.email, merged);
 
-    // Save trip
-    const dest = DATA.destinations.find(d => d.key === result.trip.destination);
+    // 3) Generate the full, web-grounded, weather-aware, personalized plan (Claude only).
+    let wx = null, bundle = null, genError = null;
+    const destGuess = titleCase(result.trip.destination);
+    if (ai.enabled()) {
+      setPendingMessage(`Researching ${destGuess} — real places, this week's live weather, and your profile. This can take up to a minute…`);
+      try { wx = await weather.forecast(result.trip.destination, result.trip.days); }
+      catch (e) { console.warn('weather lookup failed', e); }
+      try { bundle = await ai.generateTrip(result.trip, merged, wx); }
+      catch (e) { console.error('trip generation failed', e); genError = e; }
+    }
+
+    removePendingMessage();
+
+    // 4) Save the trip with its live weather + generated bundle (when available).
+    const staticDest = DATA.destinations.find(d => d.key === result.trip.destination);
     const vibe = DATA.VIBES.find(v => v.key === result.trip.primaryVibe);
-    const summary = `${vibe ? vibe.title : 'Trip'} in ${dest ? dest.name : result.trip.destination}`;
-    const trip = store.trips.add(me.email, { ...result.trip, summary });
+    const destName = bundle?.destinationMeta?.name || staticDest?.name || destGuess;
+    const summary = `${vibe ? vibe.title : 'Trip'} in ${destName}`;
+    const trip = store.trips.add(me.email, { ...result.trip, summary, weather: wx, bundle });
     store.activeTrip.set(me.email, trip.id);
 
-    const replyText = result.reply
-      || `Got it. ${dest?.name || result.trip.destination}, ${result.trip.days} day${result.trip.days > 1 ? 's' : ''}${result.trip.travelers ? `, ${result.trip.travelers} traveler${result.trip.travelers > 1 ? 's' : ''}` : ''}. I've noted: ${(result.inferred && result.inferred.length) ? result.inferred.join(', ') : 'no personal constraints from this message'}.`;
-    appendChatMessage('assistant', replyText + (usedGPT ? '' : ''));
+    // 5) Reply, tuned to what actually happened.
+    let replyText;
+    if (bundle) {
+      replyText = `Done — I built your ${destName} plan from real places and this week's forecast, shaped around your profile. Open it below.`;
+    } else if (ai.enabled()) {
+      replyText = `I saved your ${destName} trip, but the plan didn't finish generating${genError ? ` (${String(genError.message || genError).slice(0, 140)})` : ' (network or key issue)'}. Check your API key in Settings, then start the trip again.`;
+    } else if (staticDest) {
+      replyText = result.reply || `Saved your ${destName} trip using built-in demo data. Add an OpenAI or Anthropic API key in Settings to generate live plans.`;
+    } else {
+      replyText = `I saved your ${destName} trip. To generate a full plan for anywhere — real places and live weather — add your OpenAI or Anthropic API key in Settings.`;
+    }
+    appendChatMessage('assistant', replyText);
     appendTripCard(trip);
     renderTripHistory(me);
   };
@@ -1231,6 +1479,11 @@ const ui = (() => {
     el.scrollIntoView({ block: 'end', behavior: 'smooth' });
   };
   const removePendingMessage = () => { $$('#chat-log .msg[data-pending]').forEach(el => el.remove()); };
+  const setPendingMessage = (text) => {
+    const el = $('#chat-log .msg[data-pending] p');
+    if (el) el.innerHTML = escapeHtml(text).replace(/\n/g, '<br />');
+  };
+  const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   const appendTripCard = (trip) => {
     const dest = DATA.destinations.find(d => d.key === trip.destination);
@@ -1239,8 +1492,8 @@ const ui = (() => {
     el.className = 'msg trip-card';
     el.innerHTML = `
       <div class="head">
-        <h4>${escapeHtml(dest ? dest.name : trip.destination)}</h4>
-        <span class="stamp">Trip generated</span>
+        <h4>${escapeHtml(trip.bundle?.destinationMeta?.name || dest?.name || titleCase(trip.destination))}</h4>
+        <span class="stamp">${trip.bundle ? 'Live plan ready' : 'Trip saved'}</span>
       </div>
       <div class="details">
         <span>${trip.days} day${trip.days > 1 ? 's' : ''}</span>
@@ -1490,6 +1743,7 @@ const ui = (() => {
       el.textContent = connected ? 'Connected' : 'Not connected';
       el.closest('.conn-tile')?.setAttribute('data-connected', String(connected));
     };
+    setStatus('openrouter', ai.hasOpenRouter());
     setStatus('openai',    ai.hasOpenAI());
     setStatus('anthropic', ai.hasClaude());
     // Pinterest inspiration is always available; label it "Active".
@@ -1499,6 +1753,8 @@ const ui = (() => {
 
   const openSettings = () => {
     const f = $('#settings-form');
+    f.openrouterKey.value   = store.ai.openrouterKey.get();
+    f.openrouterModel.value = store.ai.openrouterModel.get();
     f.openaiKey.value    = store.ai.openaiKey.get();
     f.openaiModel.value  = store.ai.openaiModel.get();
     f.anthropicKey.value = store.ai.claudeKey.get();
@@ -1516,6 +1772,8 @@ const ui = (() => {
     $$('#sheet-settings [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
 
     $('#save-settings').onclick = () => {
+      store.ai.openrouterKey.set(f.openrouterKey.value.trim());
+      store.ai.openrouterModel.set(f.openrouterModel.value.trim());
       store.ai.openaiKey.set(f.openaiKey.value.trim());
       store.ai.openaiModel.set(f.openaiModel.value);
       store.ai.claudeKey.set(f.anthropicKey.value.trim());
@@ -1587,29 +1845,33 @@ const ui = (() => {
     const id = store.activeTrip.get(email);
     return trips.find(t => t.id === id) || trips[trips.length - 1] || null;
   };
+  // Destination metadata: AI-generated bundle first, then built-in demo data, then a slug fallback.
+  const destMetaFor = (trip) => trip?.bundle?.destinationMeta
+    || DATA.destinations.find(d => d.key === trip?.destination)
+    || { key: trip?.destination, name: titleCase(trip?.destination || ''), country: '', plug: '', culturalNote: '', palette: [], paletteNote: '' };
 
   const renderItinerary = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
-    const dest = DATA.destinations.find(d => d.key === trip.destination);
+    const meta = destMetaFor(trip);
     const vibe = DATA.VIBES.find(v => v.key === trip.primaryVibe);
-    $('#itin-hero').textContent = dest ? dest.name : trip.destination;
+    $('#itin-hero').textContent = meta.name || trip.destination;
     $('#itin-vibe-label').textContent = vibe ? vibe.title : trip.primaryVibe;
-    $('#itin-kicker').textContent = vibe ? vibe.sub : '';
-    $('#weather-note').textContent = DATA.weatherLine(trip.destination, trip.season || 'summer');
-    $('#palette-note').textContent = dest?.paletteNote || '';
-    $('#palette-swatches').innerHTML = (dest?.palette || []).map(c => `<span class="swatch" style="background:${c}"></span>`).join('');
+    $('#itin-kicker').textContent = vibe ? vibe.sub : (meta.plug || '');
+    $('#weather-note').textContent = trip.weather ? weather.describe(trip.weather) : (DATA.weatherLine(trip.destination, trip.season || 'summer') || '');
+    $('#palette-note').textContent = meta.paletteNote || '';
+    $('#palette-swatches').innerHTML = (meta.palette || []).map(c => `<span class="swatch" style="background:${c}"></span>`).join('');
     $('#badge-days').textContent = `${trip.days} day${trip.days > 1 ? 's' : ''}`;
     $('#badge-travelers').textContent = `${trip.travelers} traveler${trip.travelers > 1 ? 's' : ''}`;
     $('#badge-vibe').textContent = vibe?.title || trip.primaryVibe;
-    const itin = engine.buildItinerary(trip, profile);
-    $('#itinerary-output').innerHTML = itin.days.map((day, i) => `
+    const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
+    $('#itinerary-output').innerHTML = (itin.days || []).map((day, i) => `
       <article class="itin-day">
         <header>
           <h3>Day ${i + 1}${day.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(day.date)}</span>` : ''}</h3>
           <span class="theme">${escapeHtml(day.theme)}</span>
         </header>
-        ${day.blocks.map(b => `
+        ${(day.blocks || []).map(b => `
           <div class="itin-block">
             <div class="when">${escapeHtml(b.time)}<br /><small>${escapeHtml(b.duration)}</small></div>
             <div class="what">
@@ -1621,45 +1883,24 @@ const ui = (() => {
       </article>`).join('');
   };
 
-  const renderOutfits = async () => {
+  const renderOutfits = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
-    const itin = engine.buildItinerary(trip, profile);
+    const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
     const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
 
-    // Build one Pinterest search per unique "look name" so day looks and evening
-    // looks pull from different, on-topic searches. Fetches in parallel.
+    // Every tile opens a Pinterest search tailored to that specific look/piece — keyless, no login.
     const queryFor = (p) => pinterest.buildQuery(trip, profile, { name: p.look || p.name });
-    const uniqueQueries = Array.from(new Set(pins.map(queryFor)));
-    const pools = new Map();
-    await Promise.all(uniqueQueries.map(async q => { pools.set(q, await pinterest.searchPins(q)); }));
+    const linkFor = (p) => pinterest.searchURL(queryFor(p) + (p.kind === 'piece' && p.value ? ' ' + p.value : ''));
 
-    let pinterestHits = 0;
-    const cursorByQuery = new Map();
-    pins.forEach(p => {
-      const q = queryFor(p);
-      const pool = pools.get(q) || [];
-      if (!pool.length) return;
-      const cur = cursorByQuery.get(q) || 0;
-      p.img = pool[cur % pool.length];
-      cursorByQuery.set(q, cur + 1);
-      pinterestHits++;
-    });
-
-    // Update the small source note under the page hero.
-    const primaryQuery = queryFor(pins[0] || { look: '' });
-    const primarySearchUrl = pinterest.searchURL(primaryQuery);
-    if (pinterestHits > 0) {
-      $('#outfits-source').innerHTML =
-        `Imagery: <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Pinterest search results</a> for "${escapeHtml(primaryQuery)}". Change the keywords in Settings → Pinterest.`;
-    } else {
-      $('#outfits-source').innerHTML =
-        `Pinterest search was unreachable just now — showing Unsplash-by-keyword tiles instead. <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Open the search on Pinterest ↗</a>`;
-    }
+    const primarySearchUrl = pinterest.searchURL(queryFor(pins[0] || { look: '' }));
+    $('#outfits-source').innerHTML =
+      `Tap any look to open a tailored <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Pinterest search ↗</a> for it. Tune the style keywords in Settings → Pinterest. Connecting your Pinterest account for your saved pins is coming next.`;
 
     const byDay = {};
     pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
     const root = $('#outfits-output');
+    const badge = `<span class="pin-badge" aria-hidden="true">Pinterest ↗</span>`;
 
     root.innerHTML = Object.keys(byDay).map(k => {
       const dayPins = byDay[k]; const first = dayPins[0];
@@ -1670,33 +1911,36 @@ const ui = (() => {
         </div>
         <div class="moodboard">
           ${dayPins.map(p => {
+            const href = escapeHtml(linkFor(p));
             if (p.kind === 'look') {
               const itemsList = p.items.map(it => `<li><span class="k">${escapeHtml(it.part)}</span><span>${escapeHtml(it.value)}</span></li>`).join('');
               return `
-                <div class="pin pin--hero">
+                <a class="pin pin--hero" href="${href}" target="_blank" rel="noopener" title="Find '${escapeHtml(p.look)}' looks on Pinterest">
                   <div class="thumb" style="--ar:${p.ar}; --tone-a:${p.toneA}; --tone-b:${p.toneB};">
                     <img loading="lazy" decoding="async" src="${p.img}" alt="${escapeHtml(p.look)}" onerror="this.remove()" />
                     <span class="motif" aria-hidden="true">${escapeHtml(p.look)}</span>
+                    ${badge}
                   </div>
                   <div class="caption">
                     <span class="eyebrow">${escapeHtml(p.look)}</span>
                     <ul class="look-items">${itemsList}</ul>
                     ${p.why ? `<div class="meta">${escapeHtml(p.why)}</div>` : ''}
                   </div>
-                </div>`;
+                </a>`;
             }
             return `
-              <div class="pin">
+              <a class="pin" href="${href}" target="_blank" rel="noopener" title="Find '${escapeHtml(p.value)}' on Pinterest">
                 <div class="thumb" style="--ar:${p.ar}; --tone-a:${p.toneA}; --tone-b:${p.toneB};">
                   <img loading="lazy" decoding="async" src="${p.img}" alt="${escapeHtml(p.value)}" onerror="this.remove()" />
                   <span class="motif small" aria-hidden="true">${escapeHtml(p.value.split(/\s+/).slice(0, 2).join(' '))}</span>
+                  ${badge}
                 </div>
                 <div class="caption">
                   <span class="eyebrow">${escapeHtml(p.part)}</span>
                   <div class="name">${escapeHtml(p.value)}</div>
                   <div class="meta">${escapeHtml(p.look)}</div>
                 </div>
-              </div>`;
+              </a>`;
           }).join('')}
         </div>`;
     }).join('');
@@ -1714,8 +1958,9 @@ const ui = (() => {
   };
   const renderPacking = (req) => {
     const me = auth.current();
+    const trip = activeTripFor(me.email);
     if (!req) {
-      const trip = activeTripFor(me.email); if (!trip) return;
+      if (!trip) return;
       const defaults = { 'live-like-local':['walking-city'], 'iconic-first-visit':['walking-city','museums'],
         'relaxed-scenic':[], 'hidden-gems':['walking-city'], 'family-adventure':['walking-city'],
         'halal-food-culture':['walking-city','religious-sites'], 'luxury-without-rush':['fine-dining'] };
@@ -1724,7 +1969,11 @@ const ui = (() => {
       $('#packing-form select[name="season"]').value = trip.season || 'summer';
       req = readPackingReq();
     }
-    const result = engine.buildPacking(req, store.profile.load(me.email));
+    // AI-generated packing (weather + profile aware) when present; else the demo engine (5 cities only).
+    let result;
+    if (trip?.bundle?.packing?.lists?.length) result = trip.bundle.packing;
+    else if (DATA.destinations.find(d => d.key === trip?.destination)) result = engine.buildPacking(req, store.profile.load(me.email));
+    else result = { lists: [], reminders: [] };
     $('#packing-output').innerHTML = `
       <div class="pack-grid">
         ${result.lists.map(l => `
@@ -1761,7 +2010,9 @@ const ui = (() => {
     const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
     const f = $('#local-form');
     const ctx = { destination: trip.destination, category: f.category.value, mix: $$('[data-chips="local-mix"] input:checked').map(i => i.value) };
-    const places = engine.buildLocal(ctx);
+    const places = (trip.bundle && trip.bundle.local && trip.bundle.local.length)
+      ? trip.bundle.local
+      : (DATA.places[trip.destination] ? engine.buildLocal(ctx) : []);
     $('#local-output').innerHTML = places.length ? `
       <div class="places">
         ${places.map(p => `
@@ -1776,9 +2027,10 @@ const ui = (() => {
 
   const renderExpect = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
-    const dest = DATA.destinations.find(d => d.key === trip.destination);
-    const items = engine.buildExpect(trip.destination);
-    $('#expect-kicker').textContent = dest?.culturalNote || '';
+    const items = (trip.bundle && trip.bundle.expect && trip.bundle.expect.length)
+      ? trip.bundle.expect
+      : (DATA.expectations[trip.destination] ? engine.buildExpect(trip.destination) : []);
+    $('#expect-kicker').textContent = destMetaFor(trip).culturalNote || '';
     $('#expect-output').innerHTML = `
       <div class="expect-grid">
         ${items.map(x => `

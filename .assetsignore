@@ -1,0 +1,4 @@
+# Files that must NOT be served as public static assets by Cloudflare Pages.
+wrangler.toml
+schema.sql
+.assetsignore

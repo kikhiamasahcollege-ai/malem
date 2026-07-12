@@ -652,6 +652,25 @@
 
     <form id="settings-form" class="stack" style="margin-top:1.25rem;">
 
+      <!-- Connection: OpenRouter (primary) -->
+      <fieldset class="conn-tile" data-conn="openrouter">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">⇄</span>
+          <span>OpenRouter</span>
+          <span class="conn-status" id="conn-status-openrouter">Not connected</span>
+        </legend>
+        <p class="hint">Routes to any model and adds live web search — this powers your trip plans.</p>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" name="openrouterKey" placeholder="sk-or-…" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <input type="text" name="openrouterModel" placeholder="google/gemini-3.5-flash" autocomplete="off" />
+        </label>
+        <p class="hint" style="margin-top:.35rem;">Any OpenRouter model id. Web search is added automatically when building a plan.</p>
+      </fieldset>
+
       <!-- Connection: OpenAI -->
       <fieldset class="conn-tile" data-conn="openai">
         <legend class="conn-legend">
@@ -698,7 +717,8 @@
       <fieldset class="fieldset">
         <legend>Preferred AI</legend>
         <div class="radio-row">
-          <label><input type="radio" name="aiProvider" value="auto"   checked /><span>Auto (prefer Claude)</span></label>
+          <label><input type="radio" name="aiProvider" value="auto"   checked /><span>Auto (prefer OpenRouter)</span></label>
+          <label><input type="radio" name="aiProvider" value="openrouter" /><span>OpenRouter</span></label>
           <label><input type="radio" name="aiProvider" value="openai" /><span>OpenAI</span></label>
           <label><input type="radio" name="aiProvider" value="claude" /><span>Claude</span></label>
         </div>
