@@ -887,6 +887,22 @@ textarea {
 }
 .side-context .actions button { margin: 0; text-align: left; }
 
+/* Pinterest board embed on the Outfits page */
+.pinterest-embed {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem 1.5rem;
+  background: var(--surface);
+  margin: 0 0 2rem;
+  box-shadow: var(--shadow);
+}
+.pinterest-embed .eyebrow { display: block; margin-bottom: .8rem; }
+.pinterest-embed a[data-pin-do] {
+  color: var(--ink-2);
+  text-decoration: underline;
+  font-family: var(--font-serif);
+}
+
 /* --- Connected accounts tiles (Settings sheet) --- */
 .conn-tile {
   border: 1px solid var(--hairline);

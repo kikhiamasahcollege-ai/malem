@@ -711,36 +711,17 @@
           <span>Pinterest</span>
           <span class="conn-status" id="conn-status-pinterest">Not connected</span>
         </legend>
-        <p class="hint">Pull outfit inspiration from a board you actually curate.</p>
-
-        <details class="setup-help">
-          <summary>One-time setup — register a Pinterest developer app</summary>
-          <ol>
-            <li>Go to <a href="https://developers.pinterest.com/apps/" target="_blank" rel="noopener">developers.pinterest.com/apps</a> and sign in.</li>
-            <li>Create an app. Under <em>Redirect URIs</em>, add this site's URL exactly:
-              <code class="callout" id="pinterest-redirect-uri">—</code>
-            </li>
-            <li>Copy the <strong>App ID</strong> and paste it below.</li>
-          </ol>
-        </details>
+        <p class="hint">Paste a link to any public Pinterest board. Its pins power the Outfit inspiration page, day by day. No developer app, no login required.</p>
 
         <label class="field">
-          <span>App ID (client ID)</span>
-          <input type="text" name="pinterestClientId" placeholder="1234567" autocomplete="off" />
+          <span>Public board URL</span>
+          <input type="url" name="pinterestBoardUrl" placeholder="https://www.pinterest.com/yourname/travel-outfits/" autocomplete="off" />
         </label>
+        <p class="hint" style="margin-top:.35rem;">Open your board on Pinterest, copy the URL from the address bar, and paste it here.</p>
 
         <div class="conn-actions">
-          <button type="button" class="btn primary" id="btn-pinterest-connect">Connect Pinterest →</button>
-          <button type="button" class="btn ghost"   id="btn-pinterest-disconnect" hidden>Disconnect</button>
+          <button type="button" class="btn ghost" id="btn-pinterest-disconnect" hidden>Disconnect</button>
           <span class="save-note" id="pinterest-note" aria-live="polite"></span>
-        </div>
-
-        <div id="pinterest-boards-wrap" hidden style="margin-top:.75rem;">
-          <label class="field">
-            <span>Use this board for outfit inspiration</span>
-            <select id="pinterest-board-select" name="pinterestBoard"></select>
-          </label>
-          <p class="hint" id="pinterest-user-note"></p>
         </div>
       </fieldset>
 

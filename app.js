@@ -95,14 +95,8 @@ const store = (() => {
       setModel: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel),
     },
     pinterest: {
-      clientId: { get: () => localStorage.getItem('malem.pinterestClientId.v1') || '',
-                  set: (v) => v ? localStorage.setItem('malem.pinterestClientId.v1', v) : localStorage.removeItem('malem.pinterestClientId.v1') },
-      token:    { get: () => localStorage.getItem('malem.pinterestToken.v1') || '',
-                  set: (v) => v ? localStorage.setItem('malem.pinterestToken.v1', v) : localStorage.removeItem('malem.pinterestToken.v1') },
-      board:    { get: () => localStorage.getItem('malem.pinterestBoard.v1') || '',
-                  set: (v) => v ? localStorage.setItem('malem.pinterestBoard.v1', v) : localStorage.removeItem('malem.pinterestBoard.v1') },
-      user:     { get: () => { try { return JSON.parse(localStorage.getItem('malem.pinterestUser.v1')); } catch { return null; } },
-                  set: (v) => v ? localStorage.setItem('malem.pinterestUser.v1', JSON.stringify(v)) : localStorage.removeItem('malem.pinterestUser.v1') },
+      boardUrl: { get: () => localStorage.getItem('malem.pinterestBoardUrl.v1') || '',
+                  set: (v) => v ? localStorage.setItem('malem.pinterestBoardUrl.v1', v) : localStorage.removeItem('malem.pinterestBoardUrl.v1') },
     },
   };
 })();
@@ -547,127 +541,108 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
   return { enabled, hasKey, hasOpenAI, hasClaude, provider, parseTripViaGPT };
 })();
 
-// ---------- pinterest: OAuth 2.0 PKCE + boards/pins fetch ----------
+// ---------- pinterest: board URL → RSS via CORS proxy + widget embed ----------
+// No OAuth, no developer app. Users paste any public Pinterest board URL.
 const pinterest = (() => {
-  const AUTHORIZE_URL = 'https://www.pinterest.com/oauth/';
-  const TOKEN_URL    = 'https://api.pinterest.com/v5/oauth/token';
-  const API_BASE     = 'https://api.pinterest.com/v5';
-  const SCOPE        = 'boards:read,pins:read';
+  // Multiple free CORS proxies to try in order. Falls back if one is down.
+  const CORS_PROXIES = [
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  ];
 
-  const redirectUri = () => window.location.origin + window.location.pathname;
+  const isConnected = () => !!store.pinterest.boardUrl.get();
 
-  const hasClientId  = () => !!store.pinterest.clientId.get();
-  const isConnected  = () => !!store.pinterest.token.get();
-
-  // PKCE helpers
-  const base64UrlEncode = (bytes) => {
-    let str = '';
-    for (const b of bytes) str += String.fromCharCode(b);
-    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  };
-  const randomVerifier = () => {
-    const arr = new Uint8Array(48);
-    crypto.getRandomValues(arr);
-    return base64UrlEncode(arr);
-  };
-  const sha256Base64Url = async (input) => {
-    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-    return base64UrlEncode(new Uint8Array(hash));
-  };
-
-  const connect = async () => {
-    const clientId = store.pinterest.clientId.get();
-    if (!clientId) throw new Error('Enter a Pinterest App ID first.');
-    const verifier = randomVerifier();
-    const challenge = await sha256Base64Url(verifier);
-    sessionStorage.setItem('malem.pinterest.verifier', verifier);
-    const state = 'malem-' + randomVerifier().slice(0, 8);
-    sessionStorage.setItem('malem.pinterest.state', state);
-    const url = AUTHORIZE_URL +
-      '?response_type=code' +
-      '&client_id=' + encodeURIComponent(clientId) +
-      '&redirect_uri=' + encodeURIComponent(redirectUri()) +
-      '&scope=' + encodeURIComponent(SCOPE) +
-      '&code_challenge=' + challenge +
-      '&code_challenge_method=S256' +
-      '&state=' + encodeURIComponent(state);
-    window.location.href = url;
-  };
-
-  // Called on page load: if the URL contains ?code=...&state=..., exchange the code.
-  const handleCallbackIfPresent = async () => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state');
-    if (!code) return { handled: false };
-    const savedState = sessionStorage.getItem('malem.pinterest.state');
-    const verifier   = sessionStorage.getItem('malem.pinterest.verifier');
-    // Strip params from URL to keep it clean.
-    const cleanUrl = window.location.origin + window.location.pathname + window.location.hash;
-    window.history.replaceState(null, '', cleanUrl);
-    if (!verifier || state !== savedState) return { handled: true, error: 'OAuth state mismatch — try again.' };
-
+  // Accepts URLs like https://www.pinterest.com/user/board/ (or with a leading @ etc.)
+  // Returns { user, board, canonical, rss } or null.
+  const parseBoardUrl = (raw) => {
+    if (!raw) return null;
+    let s = String(raw).trim();
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/*/, '');
+    let m;
     try {
-      const res = await fetch(TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: redirectUri(),
-          code_verifier: verifier,
-          client_id: store.pinterest.clientId.get(),
-        }).toString(),
-      });
-      if (!res.ok) throw new Error(`Pinterest token HTTP ${res.status}`);
-      const data = await res.json();
-      if (!data.access_token) throw new Error('No access_token in response');
-      store.pinterest.token.set(data.access_token);
-      sessionStorage.removeItem('malem.pinterest.verifier');
-      sessionStorage.removeItem('malem.pinterest.state');
-      return { handled: true, ok: true };
-    } catch (err) {
-      return { handled: true, error: err.message || 'Token exchange failed' };
+      const u = new URL(s);
+      if (!/(^|\.)pinterest\.[a-z.]+$/i.test(u.hostname)) return null;
+      // Path: /user/board/  or  /user/board
+      m = u.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/);
+      if (!m) return null;
+    } catch { return null; }
+    const user = decodeURIComponent(m[1]);
+    const board = decodeURIComponent(m[2]);
+    const canonical = `https://www.pinterest.com/${user}/${board}/`;
+    const rss = `https://www.pinterest.com/${user}/${board}.rss`;
+    return { user, board, canonical, rss };
+  };
+
+  const disconnect = () => store.pinterest.boardUrl.set('');
+
+  // Try each proxy in order until one succeeds.
+  const fetchThroughProxy = async (targetUrl) => {
+    let lastErr;
+    for (const build of CORS_PROXIES) {
+      try {
+        const res = await fetch(build(targetUrl), { headers: { 'Accept': 'application/rss+xml, text/xml, */*' } });
+        if (!res.ok) { lastErr = new Error(`Proxy HTTP ${res.status}`); continue; }
+        const text = await res.text();
+        if (text && text.length > 40) return text;
+        lastErr = new Error('Empty response from proxy');
+      } catch (e) { lastErr = e; }
     }
+    throw lastErr || new Error('All CORS proxies failed.');
   };
 
-  const disconnect = () => {
-    store.pinterest.token.set('');
-    store.pinterest.board.set('');
-    store.pinterest.user.set(null);
+  // Parse the board RSS XML for image URLs.
+  const extractImageURLsFromRSS = (xmlText) => {
+    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    if (doc.querySelector('parsererror')) return [];
+    const urls = [];
+    // <media:content url="..." medium="image"/>
+    doc.querySelectorAll('item').forEach(item => {
+      // media:content (mrss)
+      let el = item.getElementsByTagName('media:content')[0];
+      if (el && el.getAttribute('url')) return urls.push(el.getAttribute('url'));
+      // enclosure
+      el = item.getElementsByTagName('enclosure')[0];
+      if (el && el.getAttribute('url')) return urls.push(el.getAttribute('url'));
+      // description HTML <img src>
+      const descr = item.getElementsByTagName('description')[0]?.textContent || '';
+      const imgMatch = descr.match(/<img[^>]+src=["']([^"']+)["']/i);
+      if (imgMatch) urls.push(imgMatch[1]);
+    });
+    return urls.filter(u => u && /^https?:\/\//.test(u));
   };
 
-  const apiGET = async (path) => {
-    const token = store.pinterest.token.get();
-    if (!token) throw new Error('Not connected to Pinterest.');
-    const res = await fetch(API_BASE + path, { headers: { 'Authorization': `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`Pinterest API ${res.status}`);
-    return res.json();
-  };
-
-  const fetchUser   = async () => apiGET('/user_account');
-  const fetchBoards = async () => (await apiGET('/boards')).items || [];
-  const fetchPins   = async (boardId) => (await apiGET(`/boards/${encodeURIComponent(boardId)}/pins`)).items || [];
-
-  // Extract a usable image URL from a Pinterest pin object.
-  const pinImageURL = (pin) => {
-    const m = pin?.media?.images;
-    if (!m) return null;
-    return m['400x300']?.url || m['600x']?.url || m['1200x']?.url || m['originals']?.url || null;
-  };
-
-  // Fetch + cache pins for the active board (memoized for the tab lifetime).
-  let _pinsCache = { boardId: null, promise: null };
+  // Fetch + cache pin images for the active board.
+  let _pinsCache = { url: null, promise: null };
   const currentBoardPins = () => {
-    const boardId = store.pinterest.board.get();
-    if (!boardId || !isConnected()) return Promise.resolve([]);
-    if (_pinsCache.boardId === boardId && _pinsCache.promise) return _pinsCache.promise;
-    _pinsCache = { boardId, promise: fetchPins(boardId).then(items => items.map(pinImageURL).filter(Boolean)) };
+    const parsed = parseBoardUrl(store.pinterest.boardUrl.get());
+    if (!parsed) return Promise.resolve([]);
+    if (_pinsCache.url === parsed.canonical && _pinsCache.promise) return _pinsCache.promise;
+    _pinsCache = {
+      url: parsed.canonical,
+      promise: fetchThroughProxy(parsed.rss)
+        .then(extractImageURLsFromRSS)
+        .catch(() => []),
+    };
     return _pinsCache.promise;
   };
-  const clearPinsCache = () => { _pinsCache = { boardId: null, promise: null }; };
+  const clearPinsCache = () => { _pinsCache = { url: null, promise: null }; };
 
-  return { redirectUri, hasClientId, isConnected, connect, handleCallbackIfPresent, disconnect, fetchUser, fetchBoards, fetchPins, currentBoardPins, clearPinsCache };
+  // Widget embed: officialPinterest JS renders the board as a native embed.
+  // Loading it dynamically so we don't include a third-party script until needed.
+  let _widgetLoaded = false;
+  const ensureWidgetScript = () => {
+    if (_widgetLoaded) return;
+    if (document.querySelector('script[data-pinterest-widget]')) { _widgetLoaded = true; return; }
+    const script = document.createElement('script');
+    script.src = 'https://assets.pinterest.com/js/pinit.js';
+    script.async = true; script.defer = true;
+    script.setAttribute('data-pinterest-widget', '1');
+    document.head.appendChild(script);
+    _widgetLoaded = true;
+  };
+
+  return { isConnected, parseBoardUrl, disconnect, currentBoardPins, clearPinsCache, ensureWidgetScript };
 })();
 
 // ---------- engine ----------
@@ -1562,32 +1537,8 @@ const ui = (() => {
     const provRadio = $(`input[name="aiProvider"][value="${prov}"]`);
     if (provRadio) provRadio.checked = true;
 
-    f.pinterestClientId.value = store.pinterest.clientId.get();
-    $('#pinterest-redirect-uri').textContent = pinterest.redirectUri();
-
-    // Board selector if connected
-    const boardsWrap = $('#pinterest-boards-wrap');
-    if (pinterest.isConnected()) {
-      boardsWrap.hidden = false;
-      const boardSel = $('#pinterest-board-select');
-      boardSel.innerHTML = `<option>Loading…</option>`;
-      pinterest.fetchBoards()
-        .then(boards => {
-          if (!boards.length) {
-            boardSel.innerHTML = `<option value="">No boards found on this account.</option>`;
-            return;
-          }
-          const cur = store.pinterest.board.get();
-          boardSel.innerHTML = boards.map(b =>
-            `<option value="${escapeHtml(b.id)}"${b.id === cur ? ' selected' : ''}>${escapeHtml(b.name)}</option>`).join('');
-        })
-        .catch(err => { boardSel.innerHTML = `<option value="">Could not load boards</option>`; console.warn(err); });
-      const u = store.pinterest.user.get();
-      $('#pinterest-user-note').textContent = u?.username ? `Connected as @${u.username}` : 'Connected.';
-    } else {
-      boardsWrap.hidden = true;
-      $('#pinterest-user-note').textContent = '';
-    }
+    f.pinterestBoardUrl.value = store.pinterest.boardUrl.get();
+    $('#btn-pinterest-disconnect').hidden = !pinterest.isConnected();
 
     refreshConnectionStatuses();
 
@@ -1602,27 +1553,33 @@ const ui = (() => {
       store.ai.claudeModel.set(f.anthropicModel.value);
       const prov = ($('input[name="aiProvider"]:checked') || {}).value || 'auto';
       store.ai.provider.set(prov);
-      store.pinterest.clientId.set(f.pinterestClientId.value.trim());
-      // Board choice, if any
-      const boardSel = $('#pinterest-board-select');
-      if (boardSel && boardSel.value) {
-        store.pinterest.board.set(boardSel.value);
+
+      const rawUrl = f.pinterestBoardUrl.value.trim();
+      if (rawUrl) {
+        const parsed = pinterest.parseBoardUrl(rawUrl);
+        if (!parsed) {
+          flash('#pinterest-note', "That doesn't look like a valid Pinterest board URL (expected pinterest.com/user/board/).");
+          return;
+        }
+        store.pinterest.boardUrl.set(parsed.canonical);
         pinterest.clearPinsCache();
+        flash('#pinterest-note', `Board saved: @${parsed.user} / ${parsed.board}`);
+      } else {
+        store.pinterest.boardUrl.set('');
       }
+
       refreshConnectionStatuses();
       const p = ai.provider();
-      flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.') + (pinterest.isConnected() ? ' Pinterest connected.' : ''));
+      flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.') + (pinterest.isConnected() ? ' Pinterest board connected.' : ''));
       updateChatHint();
     };
 
-    $('#btn-pinterest-connect').onclick = async () => {
-      store.pinterest.clientId.set(f.pinterestClientId.value.trim());
-      try { await pinterest.connect(); } catch (err) { flash('#pinterest-note', err.message || 'Could not start Pinterest.'); }
-    };
     $('#btn-pinterest-disconnect').onclick = () => {
       pinterest.disconnect();
+      pinterest.clearPinsCache();
+      f.pinterestBoardUrl.value = '';
       refreshConnectionStatuses();
-      $('#pinterest-boards-wrap').hidden = true;
+      $('#btn-pinterest-disconnect').hidden = true;
       flash('#pinterest-note', 'Disconnected.');
     };
   };
@@ -1719,23 +1676,38 @@ const ui = (() => {
     const itin = engine.buildItinerary(trip, profile);
     const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
 
-    // If Pinterest is connected + a board is selected, swap the Unsplash URLs
-    // for real pins from the user's board (cycled so every pin has a photo).
-    if (pinterest.isConnected() && store.pinterest.board.get()) {
-      try {
-        const boardPinURLs = await pinterest.currentBoardPins();
-        if (boardPinURLs && boardPinURLs.length) {
-          pins.forEach((p, i) => { p.img = boardPinURLs[i % boardPinURLs.length]; });
-          $('#outfits-source').textContent = 'Imagery: pins from your connected Pinterest board.';
-        }
-      } catch (err) { console.warn('Pinterest fetch failed', err); }
+    // If a Pinterest board URL is set, fetch its pins (via CORS proxy → RSS)
+    // and use them to fill the day-by-day layout. Also embed the board widget
+    // above the per-day looks.
+    const parsedBoard = pinterest.parseBoardUrl(store.pinterest.boardUrl.get());
+    let boardPinURLs = [];
+    if (parsedBoard) {
+      try { boardPinURLs = await pinterest.currentBoardPins(); } catch (e) { console.warn(e); }
+      if (boardPinURLs.length) {
+        pins.forEach((p, i) => { p.img = boardPinURLs[i % boardPinURLs.length]; });
+        $('#outfits-source').textContent = `Imagery: pins from pinterest.com/${parsedBoard.user}/${parsedBoard.board}/`;
+      } else {
+        $('#outfits-source').textContent = 'Imagery: Unsplash by keyword — the CORS proxy for your Pinterest board is unavailable right now.';
+      }
     } else {
-      $('#outfits-source').textContent = 'Imagery: Unsplash by keyword. Connect Pinterest in Settings to use your own board.';
+      $('#outfits-source').textContent = 'Imagery: Unsplash by keyword. Paste a Pinterest board URL in Settings → Pinterest to use your own pins.';
     }
     const byDay = {};
     pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
     const root = $('#outfits-output');
-    root.innerHTML = Object.keys(byDay).map(k => {
+
+    // Native Pinterest widget embed at the top (if a board is set).
+    const embedHtml = parsedBoard ? `
+      <section class="pinterest-embed">
+        <span class="eyebrow">Your inspiration board</span>
+        <a data-pin-do="embedBoard"
+           data-pin-board-width="800"
+           data-pin-scale-height="240"
+           data-pin-scale-width="115"
+           href="${escapeHtml(parsedBoard.canonical)}">${escapeHtml(parsedBoard.canonical)}</a>
+      </section>` : '';
+
+    root.innerHTML = embedHtml + Object.keys(byDay).map(k => {
       const dayPins = byDay[k]; const first = dayPins[0];
       return `
         <div class="outfit-day-head">
@@ -1774,6 +1746,14 @@ const ui = (() => {
           }).join('')}
         </div>`;
     }).join('');
+
+    // Bring the Pinterest widget script in and (re-)build embeds after render.
+    if (parsedBoard) {
+      pinterest.ensureWidgetScript();
+      if (window.PinUtils && typeof window.PinUtils.build === 'function') {
+        try { window.PinUtils.build(); } catch (e) { /* first-load will process automatically */ }
+      }
+    }
   };
 
   const readPackingReq = () => {
@@ -1974,21 +1954,8 @@ const ui = (() => {
   };
 
   return {
-    boot: async () => {
+    boot: () => {
       applyTheme();
-      // Handle a Pinterest OAuth redirect before anything else.
-      const cb = await pinterest.handleCallbackIfPresent();
-      if (cb.handled && cb.ok) {
-        // Fetch user info + first board to seed defaults
-        try {
-          const u = await pinterest.fetchUser();
-          store.pinterest.user.set({ username: u.username });
-          const boards = await pinterest.fetchBoards();
-          if (boards.length && !store.pinterest.board.get()) {
-            store.pinterest.board.set(boards[0].id);
-          }
-        } catch { /* ignore */ }
-      }
       initAuth();
       initChat();
       initPublic();
@@ -1996,8 +1963,6 @@ const ui = (() => {
       autosizeTextarea();
       window.addEventListener('hashchange', route);
       route();
-      // If OAuth just happened, open settings so the user can pick a board.
-      if (cb.handled && cb.ok) openSettings();
     },
   };
 })();
