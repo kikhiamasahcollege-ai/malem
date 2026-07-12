@@ -104,6 +104,12 @@ const store = (() => {
         set: (v) => v ? localStorage.setItem('malem.pinterestKeywords.v1', v) : localStorage.removeItem('malem.pinterestKeywords.v1'),
       },
     },
+    images: {
+      key: { get: () => localStorage.getItem('malem.googleImgKey.v1') || '',
+             set: (k) => k ? localStorage.setItem('malem.googleImgKey.v1', k) : localStorage.removeItem('malem.googleImgKey.v1') },
+      cx:  { get: () => localStorage.getItem('malem.googleImgCx.v1') || '',
+             set: (c) => c ? localStorage.setItem('malem.googleImgCx.v1', c) : localStorage.removeItem('malem.googleImgCx.v1') },
+    },
   };
 })();
 
@@ -764,6 +770,32 @@ const weather = (() => {
   };
 
   return { forecast, describe, codeText, geocode };
+})();
+
+// ---------- imageSearch: real product photos via Google Custom Search (browser-callable) ----------
+// Powers the Shuffles-style outfit collages. Needs a Google API key + a Programmable
+// Search Engine id (cx) set in Settings. Free tier is ~100 queries/day, so results
+// are cached and queries are de-duplicated across looks.
+const imageSearch = (() => {
+  const hasKeys = () => !!(store.images.key.get() && store.images.cx.get());
+  const _cache = new Map(); // query -> Promise<string[]>
+  const search = (query) => {
+    if (!query || !hasKeys()) return Promise.resolve([]);
+    if (_cache.has(query)) return _cache.get(query);
+    const key = store.images.key.get(), cx = store.images.cx.get();
+    const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}`
+      + `&cx=${encodeURIComponent(cx)}&searchType=image&num=4&imgType=photo&safe=active`
+      + `&q=${encodeURIComponent(query)}`;
+    const p = fetch(url)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('CSE HTTP ' + r.status)))
+      .then(j => (j.items || []).map(it => it.link).filter(Boolean))
+      .catch(err => { console.warn('image search failed:', err.message); return []; });
+    _cache.set(query, p);
+    return p;
+  };
+  const first = (query) => search(query).then(list => list[0] || null);
+  const clearCache = () => _cache.clear();
+  return { hasKeys, search, first, clearCache };
 })();
 
 // ---------- pinterest: search Pinterest for outfit inspo (no login, no board) ----------
@@ -1746,6 +1778,7 @@ const ui = (() => {
     setStatus('openrouter', ai.hasOpenRouter());
     setStatus('openai',    ai.hasOpenAI());
     setStatus('anthropic', ai.hasClaude());
+    setStatus('images',    imageSearch.hasKeys());
     // Pinterest inspiration is always available; label it "Active".
     const pin = $('#conn-status-pinterest');
     if (pin) { pin.textContent = 'Active'; pin.closest('.conn-tile')?.setAttribute('data-connected', 'true'); }
@@ -1755,6 +1788,8 @@ const ui = (() => {
     const f = $('#settings-form');
     f.openrouterKey.value   = store.ai.openrouterKey.get();
     f.openrouterModel.value = store.ai.openrouterModel.get();
+    f.googleImgKey.value = store.images.key.get();
+    f.googleImgCx.value  = store.images.cx.get();
     f.openaiKey.value    = store.ai.openaiKey.get();
     f.openaiModel.value  = store.ai.openaiModel.get();
     f.anthropicKey.value = store.ai.claudeKey.get();
@@ -1774,6 +1809,8 @@ const ui = (() => {
     $('#save-settings').onclick = () => {
       store.ai.openrouterKey.set(f.openrouterKey.value.trim());
       store.ai.openrouterModel.set(f.openrouterModel.value.trim());
+      store.images.key.set(f.googleImgKey.value.trim());
+      store.images.cx.set(f.googleImgCx.value.trim());
       store.ai.openaiKey.set(f.openaiKey.value.trim());
       store.ai.openaiModel.set(f.openaiModel.value);
       store.ai.claudeKey.set(f.anthropicKey.value.trim());
@@ -1883,68 +1920,82 @@ const ui = (() => {
       </article>`).join('');
   };
 
+  // Flat-lay slots (percent of board) per wardrobe part — a Shuffles-style collage.
+  const OUTFIT_SLOTS = {
+    Top:       { left: 4,  top: 3,  w: 46, rot: -3, z: 3 },
+    Outer:     { left: 48, top: 1,  w: 45, rot: 4,  z: 2 },
+    Bottom:    { left: 46, top: 37, w: 40, rot: 2,  z: 1 },
+    Shoes:     { left: 3,  top: 58, w: 38, rot: -5, z: 4 },
+    Accessory: { left: 60, top: 60, w: 30, rot: 6,  z: 5 },
+  };
+  // Concise product query from a verbose look value ("Cotton tee or linen shirt" -> "Cotton tee").
+  const itemQuery = (v) => String(v || '').split(/\bor\b/i)[0].replace(/,.*$/, '').trim();
+
   const renderOutfits = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
     const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
-    const { pins } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
+    const { looks } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
 
-    // Every tile opens a Pinterest search tailored to that specific look/piece — keyless, no login.
-    const queryFor = (p) => pinterest.buildQuery(trip, profile, { name: p.look || p.name });
-    const linkFor = (p) => pinterest.searchURL(queryFor(p) + (p.kind === 'piece' && p.value ? ' ' + p.value : ''));
-
-    const primarySearchUrl = pinterest.searchURL(queryFor(pins[0] || { look: '' }));
-    $('#outfits-source').innerHTML =
-      `Tap any look to open a tailored <a href="${escapeHtml(primarySearchUrl)}" target="_blank" rel="noopener">Pinterest search ↗</a> for it. Tune the style keywords in Settings → Pinterest. Connecting your Pinterest account for your saved pins is coming next.`;
+    $('#outfits-source').innerHTML = imageSearch.hasKeys()
+      ? `Each board is composed into an outfit collage from real product photos. Publishing boards straight to Pinterest is next.`
+      : `These are your outfit boards. Add a Google image-search key in <a href="#" id="outfits-settings-link">Settings</a> to fill them with real product photos (Shuffles-style). Publishing to Pinterest connects after that.`;
 
     const byDay = {};
-    pins.forEach(p => { (byDay[p.dayIndex] ||= []).push(p); });
+    looks.forEach(l => { (byDay[l.dayIndex] ||= []).push(l); });
     const root = $('#outfits-output');
-    const badge = `<span class="pin-badge" aria-hidden="true">Pinterest ↗</span>`;
 
     root.innerHTML = Object.keys(byDay).map(k => {
-      const dayPins = byDay[k]; const first = dayPins[0];
+      const dayLooks = byDay[k]; const first = dayLooks[0];
       return `
         <div class="outfit-day-head">
           <h3>Day ${escapeHtml(k)}${first.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(first.date)}</span>` : ''}</h3>
           <p class="theme">${escapeHtml(first.theme)}</p>
         </div>
-        <div class="moodboard">
-          ${dayPins.map(p => {
-            const href = escapeHtml(linkFor(p));
-            if (p.kind === 'look') {
-              const itemsList = p.items.map(it => `<li><span class="k">${escapeHtml(it.part)}</span><span>${escapeHtml(it.value)}</span></li>`).join('');
+        <div class="shuffle-grid">
+          ${dayLooks.map(look => {
+            const search = pinterest.searchURL(pinterest.buildQuery(trip, profile, { name: look.name }));
+            const board = look.items.map(it => {
+              const slot = OUTFIT_SLOTS[it.part] || { left: 30, top: 32, w: 36, rot: 0, z: 1 };
+              const q = itemQuery(it.value);
               return `
-                <a class="pin pin--hero" href="${href}" target="_blank" rel="noopener" title="Find '${escapeHtml(p.look)}' looks on Pinterest">
-                  <div class="thumb" style="--ar:${p.ar}; --tone-a:${p.toneA}; --tone-b:${p.toneB};">
-                    <img loading="lazy" decoding="async" src="${p.img}" alt="${escapeHtml(p.look)}" onerror="this.remove()" />
-                    <span class="motif" aria-hidden="true">${escapeHtml(p.look)}</span>
-                    ${badge}
-                  </div>
-                  <div class="caption">
-                    <span class="eyebrow">${escapeHtml(p.look)}</span>
-                    <ul class="look-items">${itemsList}</ul>
-                    ${p.why ? `<div class="meta">${escapeHtml(p.why)}</div>` : ''}
-                  </div>
-                </a>`;
-            }
+                <div class="shuffle-item" style="left:${slot.left}%;top:${slot.top}%;width:${slot.w}%;--rot:${slot.rot}deg;z-index:${slot.z};">
+                  <img data-q="${escapeHtml(q)}" alt="${escapeHtml(it.value)}" loading="lazy" onerror="this.closest('.shuffle-item').classList.remove('hasimg')" />
+                  <span class="chip"><span class="k">${escapeHtml(it.part)}</span>${escapeHtml(q)}</span>
+                </div>`;
+            }).join('');
+            const itemsList = look.items.map(it => `<li><span class="k">${escapeHtml(it.part)}</span><span>${escapeHtml(it.value)}</span></li>`).join('');
             return `
-              <a class="pin" href="${href}" target="_blank" rel="noopener" title="Find '${escapeHtml(p.value)}' on Pinterest">
-                <div class="thumb" style="--ar:${p.ar}; --tone-a:${p.toneA}; --tone-b:${p.toneB};">
-                  <img loading="lazy" decoding="async" src="${p.img}" alt="${escapeHtml(p.value)}" onerror="this.remove()" />
-                  <span class="motif small" aria-hidden="true">${escapeHtml(p.value.split(/\s+/).slice(0, 2).join(' '))}</span>
-                  ${badge}
+              <article class="shuffle-card">
+                <div class="shuffle-board">
+                  ${board}
+                  <a class="shuffle-pin" href="${escapeHtml(search)}" target="_blank" rel="noopener" title="Find similar on Pinterest">Pinterest ↗</a>
                 </div>
-                <div class="caption">
-                  <span class="eyebrow">${escapeHtml(p.part)}</span>
-                  <div class="name">${escapeHtml(p.value)}</div>
-                  <div class="meta">${escapeHtml(p.look)}</div>
+                <div class="shuffle-caption">
+                  <span class="eyebrow">${escapeHtml(look.name)}</span>
+                  <ul class="look-items">${itemsList}</ul>
+                  ${look.why ? `<div class="meta">${escapeHtml(look.why)}</div>` : ''}
                 </div>
-              </a>`;
+              </article>`;
           }).join('')}
         </div>`;
     }).join('');
 
+    const sl = $('#outfits-settings-link');
+    if (sl) sl.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
+
+    // Progressive fill: drop real product photos into each slot (de-duped, cached).
+    if (imageSearch.hasKeys()) {
+      const imgs = Array.from(root.querySelectorAll('.shuffle-item img[data-q]'));
+      Array.from(new Set(imgs.map(im => im.getAttribute('data-q')))).forEach(q => {
+        imageSearch.first(q).then(src => {
+          if (!src) return;
+          root.querySelectorAll('.shuffle-item img[data-q="' + (window.CSS && CSS.escape ? CSS.escape(q) : q) + '"]').forEach(im => {
+            im.src = src; im.closest('.shuffle-item').classList.add('hasimg');
+          });
+        });
+      });
+    }
   };
 
   const readPackingReq = () => {

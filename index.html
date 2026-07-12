@@ -724,6 +724,28 @@
         </div>
       </fieldset>
 
+      <!-- Connection: Product images (Google Custom Search) -->
+      <fieldset class="conn-tile" data-conn="images">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">▦</span>
+          <span>Product images (Google)</span>
+          <span class="conn-status" id="conn-status-images">Not connected</span>
+        </legend>
+        <p class="hint">Fills the outfit collage boards with real product photos (Shuffles-style). Uses Google Custom Search — free ~100 lookups/day.</p>
+        <label class="field">
+          <span>API key</span>
+          <input type="password" name="googleImgKey" placeholder="AIza…" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Search engine ID (cx)</span>
+          <input type="text" name="googleImgCx" placeholder="e.g. 017…:abc" autocomplete="off" />
+        </label>
+        <p class="hint" style="margin-top:.35rem;">
+          Key: <a href="https://console.cloud.google.com" target="_blank" rel="noopener">Google Cloud</a> → enable “Custom Search API”.
+          Engine id: <a href="https://programmablesearchengine.google.com" target="_blank" rel="noopener">Programmable Search</a> → “Search the entire web” + Image search on.
+        </p>
+      </fieldset>
+
       <!-- Pinterest inspiration source (always on) -->
       <fieldset class="conn-tile" data-conn="pinterest" data-connected="true">
         <legend class="conn-legend">

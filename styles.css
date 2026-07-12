@@ -967,3 +967,57 @@ textarea {
 @supports (backdrop-filter: blur(4px)) { .pin-badge { backdrop-filter: blur(4px); } }
 .moodboard .pin:hover .pin-badge,
 .moodboard .pin:focus-visible .pin-badge { opacity: 1; transform: translateY(0); }
+
+/* --- Shuffles-style outfit collage boards --- */
+.shuffle-grid { columns: 2 260px; column-gap: 1.25rem; margin-top: 1rem; }
+.shuffle-card {
+  break-inside: avoid; margin: 0 0 1.25rem;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.shuffle-board {
+  position: relative; aspect-ratio: 4 / 5; overflow: hidden;
+  background: linear-gradient(155deg, #faf7f0 0%, #efe9dc 100%);
+}
+.shuffle-item {
+  position: absolute; transform: rotate(var(--rot, 0deg));
+  display: flex; align-items: center; justify-content: center;
+}
+.shuffle-item img {
+  width: 100%; height: auto; display: none;
+  mix-blend-mode: multiply;                 /* white product backgrounds drop out */
+  filter: drop-shadow(0 8px 12px rgba(40, 30, 20, .14));
+}
+.shuffle-item.hasimg img { display: block; }
+.shuffle-item.hasimg .chip { display: none; }
+.shuffle-item .chip {
+  font-family: var(--font-sans); font-size: .62rem; line-height: 1.25; text-align: center;
+  background: rgba(255, 255, 255, .8); border: 1px solid var(--hairline);
+  border-radius: 10px; padding: .35rem .5rem; color: var(--ink-2); max-width: 100%;
+}
+.shuffle-item .chip .k {
+  display: block; font-size: .54rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: .12rem;
+}
+.shuffle-pin {
+  position: absolute; bottom: 8px; right: 8px; z-index: 20;
+  font-family: var(--font-sans); font-size: .6rem; letter-spacing: .1em; text-transform: uppercase;
+  background: rgba(20, 15, 10, .6); color: #fff; padding: .25rem .5rem;
+  border-radius: 999px; text-decoration: none; opacity: 0; transition: opacity .18s ease;
+}
+.shuffle-board:hover .shuffle-pin { opacity: 1; }
+.shuffle-caption { padding: .85rem 1rem 1rem; }
+.shuffle-caption .eyebrow { display: block; margin-bottom: .3rem; }
+.shuffle-caption .look-items {
+  list-style: none; padding: 0; margin: .3rem 0 0; display: grid; gap: .3rem; font-family: var(--font-serif);
+}
+.shuffle-caption .look-items li {
+  display: grid; grid-template-columns: 76px 1fr; gap: .55rem;
+  border-top: 1px solid var(--hairline); padding-top: .3rem; font-size: .92rem; line-height: 1.35;
+}
+.shuffle-caption .look-items li:first-child { border-top: 0; padding-top: 0; }
+.shuffle-caption .look-items .k {
+  color: var(--ink-3); font-family: var(--font-sans);
+  font-size: .66rem; letter-spacing: .16em; text-transform: uppercase; padding-top: .2rem;
+}
+.shuffle-caption .meta { color: var(--ink-3); font-size: .82rem; margin-top: .5rem; font-style: italic; }
