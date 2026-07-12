@@ -84,13 +84,22 @@ const store = (() => {
                       set: (m) => m ? localStorage.setItem(K.openaiModel, m) : localStorage.removeItem(K.openaiModel) },
       claudeKey:    { get: () => localStorage.getItem('malem.anthropicKey.v1') || '',
                       set: (k) => k ? localStorage.setItem('malem.anthropicKey.v1', k) : localStorage.removeItem('malem.anthropicKey.v1') },
-      claudeModel:  { get: () => localStorage.getItem('malem.anthropicModel.v1') || 'claude-sonnet-5',
+      claudeModel:  { get: () => {
+                        const saved = localStorage.getItem('malem.anthropicModel.v1') || '';
+                        // Migrate model ids that were placeholders or are now retired.
+                        return ['claude-sonnet-5', 'claude-3-5-sonnet-latest'].includes(saved)
+                          ? 'claude-sonnet-4-20250514'
+                          : (saved || 'claude-sonnet-4-20250514');
+                      },
                       set: (m) => m ? localStorage.setItem('malem.anthropicModel.v1', m) : localStorage.removeItem('malem.anthropicModel.v1') },
       provider:     { get: () => localStorage.getItem('malem.aiProvider.v1') || 'auto',
                       set: (p) => p ? localStorage.setItem('malem.aiProvider.v1', p) : localStorage.removeItem('malem.aiProvider.v1') },
       openrouterKey:   { get: () => localStorage.getItem('malem.openrouterKey.v1') || '',
                          set: (k) => k ? localStorage.setItem('malem.openrouterKey.v1', k) : localStorage.removeItem('malem.openrouterKey.v1') },
-      openrouterModel: { get: () => localStorage.getItem('malem.openrouterModel.v1') || 'google/gemini-3.5-flash',
+      openrouterModel: { get: () => {
+                           const saved = localStorage.getItem('malem.openrouterModel.v1') || '';
+                           return saved === 'google/gemini-3.5-flash' ? 'openrouter/auto' : (saved || 'openrouter/auto');
+                         },
                          set: (m) => m ? localStorage.setItem('malem.openrouterModel.v1', m) : localStorage.removeItem('malem.openrouterModel.v1') },
       // Back-compat for older callers:
       getKey:   () => localStorage.getItem(K.openaiKey) || '',
@@ -293,6 +302,31 @@ const parser = (() => {
 
   const numberWords = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, a:1, an:1 };
 
+  const slugifyPlace = (value) => String(value || '')
+    .toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  // The dependency-free parser should still accept any destination, not just the
+  // five cities with bundled demo data. Keep the match conservative so phrases
+  // such as "with my parents" do not become part of the place name.
+  const genericDestination = (text) => {
+    const raw = String(text || '').trim();
+    const stop = '(?=\\s+(?:for|with|from|on|next|this|during|because|and\\s+(?:i|we|my|our))\\b|[,;.!?]|$)';
+    const patterns = [
+      new RegExp('\\b(?:go(?:ing)?|travel(?:l)?ing|head(?:ing)?|fly(?:ing)?|visit(?:ing)?|vacation(?:ing)?)\\s+(?:to|in)\\s+([a-z][a-z .\\\'-]{1,48}?)' + stop, 'i'),
+      new RegExp('\\b(?:trip|vacation|weekend)\\s+(?:to|in)\\s+([a-z][a-z .\\\'-]{1,48}?)' + stop, 'i'),
+      new RegExp('\\b(?:to|in)\\s+([a-z][a-z .\\\'-]{1,48}?)' + stop, 'i'),
+    ];
+    for (const pattern of patterns) {
+      const match = raw.match(pattern);
+      if (match && slugifyPlace(match[1])) return match[1].trim();
+    }
+    // A short reply such as "Barcelona" or "Mexico City" is a destination.
+    if (/^[a-z][a-z .'-]{1,48}$/i.test(raw) && raw.trim().split(/\s+/).length <= 4
+      && !/^(yes|no|maybe|thanks|thank you|surprise me|not sure)$/i.test(raw)) return raw;
+    return '';
+  };
+
   const parseTrip = (text) => {
     const t = ' ' + text.toLowerCase() + ' ';
     const trip = { destination: null, days: null, travelers: null, arrivalDate: null,
@@ -311,6 +345,13 @@ const parser = (() => {
     for (const [k, aliases] of Object.entries(DEST_ALIASES)) {
       if (aliases.some(a => t.includes(' ' + a + ' ') || t.includes(' ' + a + ',') || t.includes(' ' + a + '.'))) {
         trip.destination = k; inferred.push(DATA.destinations.find(d => d.key === k).name); break;
+      }
+    }
+    if (!trip.destination) {
+      const place = genericDestination(text);
+      if (place) {
+        trip.destination = slugifyPlace(place);
+        inferred.push(String(place).replace(/\b\w/g, c => c.toUpperCase()));
       }
     }
 
@@ -513,7 +554,10 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
     });
     if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}`);
     const data = await res.json();
-    return JSON.parse(data.choices[0].message.content);
+    const content = data.choices?.[0]?.message?.content || '';
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('OpenAI returned no JSON object.');
+    return JSON.parse(match[0]);
   };
 
   // Anthropic-hosted web search tool. Claude runs the searches itself; results
@@ -694,7 +738,9 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
   // OpenRouter: web-grounded generation via the ":online" model suffix (built-in web search).
   const generateViaOpenRouter = (trip, profile, weatherObj) => {
     const base = store.ai.openrouterModel.get();
-    const model = base.includes(':') ? base : `${base}:online`; // enable web search unless already suffixed
+    // Router ids do not accept model-variant suffixes; online search is already
+    // available to the auto router. Concrete model ids can use :online.
+    const model = base.startsWith('openrouter/') || base.includes(':') ? base : `${base}:online`;
     return openRouterJSON({ model, system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), maxTokens: 8000 });
   };
 
@@ -817,7 +863,10 @@ const pinterest = (() => {
     const evening = look && String(look.name || look).toLowerCase().includes('evening');
     const timeOfDay = evening ? 'evening' : 'daytime';
     const extra = store.pinterest.extraKeywords.get();
-    const parts = [destName, modest, season, timeOfDay, 'outfit', 'inspiration'];
+    const lookName = look && String(look.name || look.look || '').toLowerCase();
+    const theme = look && String(look.theme || '').toLowerCase();
+    const day = look && look.dayIndex ? `day ${look.dayIndex}` : '';
+    const parts = [destName, modest, season, day, theme, lookName, timeOfDay, 'outfit', 'inspiration'];
     if (extra) parts.push(extra);
     return parts.filter(Boolean).join(' ');
   };
@@ -841,12 +890,15 @@ const pinterest = (() => {
   // Pull Pinterest CDN image URLs out of the HTML.
   const extractPinImagesFromHTML = (html) => {
     const set = new Set();
+    // Pinterest commonly embeds URLs inside JSON where slashes are escaped.
+    const normalized = String(html || '')
+      .replace(/\\u002F/gi, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
     // Direct references to i.pinimg.com (Pinterest's image CDN).
     const patterns = [
       /https:\/\/i\.pinimg\.com\/[0-9]+x\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
       /https:\/\/i\.pinimg\.com\/originals\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
     ];
-    patterns.forEach(p => { (html.match(p) || []).forEach(u => set.add(u)); });
+    patterns.forEach(p => { (normalized.match(p) || []).forEach(u => set.add(u)); });
     // Upscale small results (Pinterest serves multiple sizes at the same path).
     return [...set].map(u => u.replace(/\/236x\//, '/474x/').replace(/\/60x60_RS\//, '/474x/'));
   };
@@ -1297,7 +1349,7 @@ const engine = (() => {
     return Array.from(set);
   };
 
-  return { buildItinerary, buildPacking, buildDiscover, buildLocal, buildExpect, buildOutfits, blendGroupVibes, consolidateConstraints };
+  return { buildItinerary, buildPacking, buildDiscover, buildLocal, buildExpect, buildOutfits, stockURL, blendGroupVibes, consolidateConstraints };
 })();
 
 // ---------- auth ----------
@@ -1370,6 +1422,9 @@ const auth = (() => {
 
 // ---------- ui ----------
 const ui = (() => {
+  // Accumulates clarification turns (for example "five days" followed by
+  // "Barcelona") so both AI and the local parser receive the full request.
+  let pendingTripText = '';
   const $  = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -1439,24 +1494,31 @@ const ui = (() => {
     appendChatMessage('assistant', 'Reading your trip…', { pending: true });
 
     // 1) Parse the message into a trip request + profile preferences.
+    const parseText = pendingTripText ? `${pendingTripText}\n${text}` : text;
     let result = null;
+    let parseError = null;
     if (ai.enabled()) {
       try {
-        const gpt = await ai.parseTripViaGPT(text);
+        const gpt = await ai.parseTripViaGPT(parseText);
         result = { trip: gpt.trip, prefs: gpt.profile, reply: gpt.reply, missing: gpt.missing || [], inferred: [] };
-      } catch (err) { console.error('AI parse failed, falling back to local parser', err); }
+      } catch (err) { parseError = err; console.error('AI parse failed, falling back to local parser', err); }
     }
     if (!result) {
-      const local = parser.parseTrip(text);
+      const local = parser.parseTrip(parseText);
       result = { trip: local.trip, prefs: local.prefs, missing: local.missing, inferred: local.inferred };
     }
 
     if (!result.trip || !result.trip.destination || (result.missing || []).includes('destination')) {
+      pendingTripText = parseText;
       removePendingMessage();
+      const providerNote = parseError
+        ? ` I also couldn't reach your ${ai.provider() || 'AI'} connection (${String(parseError.message || parseError).slice(0, 120)}). You can update it in Settings.`
+        : '';
       appendChatMessage('assistant',
-        (result.reply || `Which destination are you thinking of? Tell me the place and roughly how many days, and I'll build the plan.`));
+        (result.reply || `Which destination are you thinking of? Tell me the place and roughly how many days, and I'll build the plan.`) + providerNote);
       return;
     }
+    pendingTripText = '';
 
     // 2) Merge parsed preferences onto the saved profile (this is the AI's "memory").
     const existing = store.profile.load(me.email);
@@ -1938,8 +2000,8 @@ const ui = (() => {
     const { looks } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
 
     $('#outfits-source').innerHTML = imageSearch.hasKeys()
-      ? `Each board is composed into an outfit collage from real product photos. Publishing boards straight to Pinterest is next.`
-      : `These are your outfit boards. Add a Google image-search key in <a href="#" id="outfits-settings-link">Settings</a> to fill them with real product photos (Shuffles-style). Publishing to Pinterest connects after that.`;
+      ? `Each day uses a distinct search built from its activities, look, weather, and destination, with real product photos.`
+      : `Each day uses its own Pinterest inspiration search, with keyless fashion photos shown immediately. Add a Google image-search key in <a href="#" id="outfits-settings-link">Settings</a> for more product-specific results.`;
 
     const byDay = {};
     looks.forEach(l => { (byDay[l.dayIndex] ||= []).push(l); });
@@ -1953,20 +2015,25 @@ const ui = (() => {
           <p class="theme">${escapeHtml(first.theme)}</p>
         </div>
         <div class="shuffle-grid">
-          ${dayLooks.map(look => {
-            const search = pinterest.searchURL(pinterest.buildQuery(trip, profile, { name: look.name }));
-            const board = look.items.map(it => {
+          ${dayLooks.map((look, lookIndex) => {
+            const pinQuery = pinterest.buildQuery(trip, profile, look);
+            const search = pinterest.searchURL(pinQuery);
+            const lookId = `look-${look.dayIndex}-${lookIndex}`;
+            const board = look.items.map((it, itemIndex) => {
               const slot = OUTFIT_SLOTS[it.part] || { left: 30, top: 32, w: 36, rot: 0, z: 1 };
               const q = itemQuery(it.value);
+              const imageQuery = [trip.destination, `day ${look.dayIndex}`, look.theme, look.name, q, it.part, 'fashion product'].filter(Boolean).join(' ');
+              const lock = (look.dayIndex * 100) + (lookIndex * 10) + itemIndex + 1;
+              const fallback = engine.stockURL([look.name, it.part, q, trip.destination], 520, 620, lock);
               return `
-                <div class="shuffle-item" style="left:${slot.left}%;top:${slot.top}%;width:${slot.w}%;--rot:${slot.rot}deg;z-index:${slot.z};">
-                  <img data-q="${escapeHtml(q)}" alt="${escapeHtml(it.value)}" loading="lazy" onerror="this.closest('.shuffle-item').classList.remove('hasimg')" />
+                <div class="shuffle-item hasimg" style="left:${slot.left}%;top:${slot.top}%;width:${slot.w}%;--rot:${slot.rot}deg;z-index:${slot.z};">
+                  <img src="${escapeHtml(fallback)}" data-q="${escapeHtml(imageQuery)}" alt="${escapeHtml(it.value)}" loading="lazy" onerror="this.closest('.shuffle-item').classList.remove('hasimg')" />
                   <span class="chip"><span class="k">${escapeHtml(it.part)}</span>${escapeHtml(q)}</span>
                 </div>`;
             }).join('');
             const itemsList = look.items.map(it => `<li><span class="k">${escapeHtml(it.part)}</span><span>${escapeHtml(it.value)}</span></li>`).join('');
             return `
-              <article class="shuffle-card">
+              <article class="shuffle-card" data-look-id="${escapeHtml(lookId)}" data-pin-query="${escapeHtml(pinQuery)}">
                 <div class="shuffle-board">
                   ${board}
                   <a class="shuffle-pin" href="${escapeHtml(search)}" target="_blank" rel="noopener" title="Find similar on Pinterest">Pinterest ↗</a>
@@ -1984,14 +2051,24 @@ const ui = (() => {
     const sl = $('#outfits-settings-link');
     if (sl) sl.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
 
-    // Progressive fill: drop real product photos into each slot (de-duped, cached).
+    // Progressive fill. Google CSE gives product-specific results when configured;
+    // otherwise use distinct Pinterest results for each look. The keyless photo
+    // URLs rendered above remain visible if either remote search is unavailable.
     if (imageSearch.hasKeys()) {
       const imgs = Array.from(root.querySelectorAll('.shuffle-item img[data-q]'));
-      Array.from(new Set(imgs.map(im => im.getAttribute('data-q')))).forEach(q => {
-        imageSearch.first(q).then(src => {
+      imgs.forEach(im => {
+        imageSearch.first(im.getAttribute('data-q')).then(src => {
           if (!src) return;
-          root.querySelectorAll('.shuffle-item img[data-q="' + (window.CSS && CSS.escape ? CSS.escape(q) : q) + '"]').forEach(im => {
-            im.src = src; im.closest('.shuffle-item').classList.add('hasimg');
+          im.src = src; im.closest('.shuffle-item').classList.add('hasimg');
+        });
+      });
+    } else {
+      root.querySelectorAll('.shuffle-card[data-pin-query]').forEach(card => {
+        pinterest.searchPins(card.dataset.pinQuery).then(images => {
+          if (!images.length || !card.isConnected) return;
+          card.querySelectorAll('.shuffle-item img').forEach((im, index) => {
+            const src = images[index % images.length];
+            if (src) { im.src = src; im.closest('.shuffle-item').classList.add('hasimg'); }
           });
         });
       });
