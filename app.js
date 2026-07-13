@@ -2168,7 +2168,9 @@ const ui = (() => {
         pinterest.searchPins(card.dataset.pinQuery).then(images => {
           if (!images.length || !card.isConnected) return;
           card.querySelectorAll('.shuffle-item img').forEach((im, index) => {
-            const src = images[index % images.length];
+            // Do not repeat one Pinterest result across every wardrobe piece;
+            // unmatched slots keep their distinct, proxied keyless photos.
+            const src = images[index];
             if (src) { im.src = proxiedImage(src); im.closest('.shuffle-item').classList.add('hasimg'); }
           });
         });
