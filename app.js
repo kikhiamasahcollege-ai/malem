@@ -1251,11 +1251,21 @@ const engine = (() => {
     'luxury-without-rush':['luxury','silk','refined'],
   }[vibe] || ['minimal','editorial']);
 
-  // Unsplash Source URL (no key required). Random matching photo per keyword set.
-  // Keyless topical imagery (Unsplash Source was retired). loremflickr matches by tag;
-  // a stable `lock` keeps each tile's image consistent across renders.
-  const stockURL = (keywords, w = 480, h = 600, lock = 1) =>
-    `https://loremflickr.com/${w}/${h}/${encodeURIComponent(keywords.filter(Boolean).slice(0, 2).join(','))}?lock=${lock}`;
+  // Curated, stable Unsplash fashion photos. Unlike random image endpoints, these
+  // resolve quickly and consistently through the same-origin Cloudflare proxy.
+  const STOCK_FASHION_PHOTOS = [
+    'photo-1529139574466-a303027c1d8b', 'photo-1490481651871-ab68de25d43d',
+    'photo-1483985988355-763728e1935b', 'photo-1521572163474-6864f9cf17ab',
+    'photo-1445205170230-053b83016050', 'photo-1539109136881-3be0616acf4b',
+    'photo-1542291026-7eec264c27ff', 'photo-1548036328-c9fa89d128fa',
+    'photo-1595777457583-95e059d581b8', 'photo-1551488831-00ddcb6c6bd3',
+    'photo-1515886657613-9f3515b0c78f', 'photo-1469334031218-e382a71b716b',
+    'photo-1509631179647-0177331693ae', 'photo-1525507119028-ed4c629a60a3',
+  ];
+  const stockURL = (_keywords, w = 480, h = 600, lock = 1) => {
+    const photo = STOCK_FASHION_PHOTOS[Math.abs(Number(lock) || 1) % STOCK_FASHION_PHOTOS.length];
+    return `https://images.unsplash.com/${photo}?auto=format&fit=crop&w=${w}&h=${h}&q=82`;
+  };
 
   const buildOutfits = (itinerary, profile, season, destinationKey, trip) => {
     const s = seasonInfo(season);
@@ -1293,10 +1303,27 @@ const engine = (() => {
       'editorial','fashion','neutral',
     ].filter(Boolean);
 
-    const pieceForTop = (fine) => fine ? (modest ? 'Draped silk blouse, long sleeve' : 'Silk blouse')
-                                       : (modest ? 'Loose linen shirt, long sleeve' : (s.warmth === 'cold' ? 'Cream cashmere sweater' : 'Cotton tee or linen shirt'));
-    const pieceForBottom = (fine) => fine ? (modest ? 'Ankle-length silk trouser' : 'Tailored trouser')
-                                          : (modest ? 'Midi skirt or wide-leg trouser' : (s.warmth === 'cold' ? 'Straight-leg denim' : 'Tailored short or midi skirt'));
+    const colors = ['ivory', 'indigo', 'sage', 'terracotta', 'charcoal', 'sand', 'deep navy'];
+    const warmTops = modest
+      ? ['long-sleeve linen tunic', 'relaxed poplin shirt', 'lightweight draped blouse', 'oversized cotton button-down']
+      : ['linen camp shirt', 'ribbed cotton top', 'breathable knit polo', 'crisp poplin blouse', 'relaxed linen tee'];
+    const coldTops = modest
+      ? ['fine merino turtleneck', 'long cashmere cardigan', 'brushed wool overshirt', 'ribbed mock-neck sweater']
+      : ['cashmere crewneck', 'merino polo knit', 'textured wool sweater', 'fitted mock-neck knit'];
+    const dayBottoms = modest
+      ? ['wide-leg linen trousers', 'fluid ankle-length skirt', 'pleated full-length trousers', 'structured midi skirt']
+      : ['pleated trousers', 'relaxed straight-leg denim', 'linen midi skirt', 'cropped tailored trousers', 'utility trousers'];
+    const dayOuters = s.warmth === 'cold'
+      ? ['belted wool coat', 'quilted liner jacket', 'long tailored overcoat', 'water-resistant trench']
+      : ['cropped linen jacket', 'light cotton overshirt', 'unstructured blazer', 'packable rain shell'];
+    const dayShoes = ['retro walking sneakers', 'soft leather loafers', 'supportive ballet flats', 'low-profile trainers', 'cushioned walking sandals'];
+    const dayAccessories = ['woven crossbody bag', 'silk neck scarf', 'structured canvas tote', 'wide-brim sun hat', 'compact shoulder bag'];
+    const eveningTops = modest
+      ? ['draped long-sleeve satin blouse', 'high-neck silk shell with light wrap', 'fluid crepe tunic']
+      : ['draped silk blouse', 'satin camisole with blazer', 'fine-gauge evening knit', 'sculpted crepe top'];
+    const eveningBottoms = modest
+      ? ['full-length satin trousers', 'flowing pleated maxi skirt', 'tailored wide-leg trousers']
+      : ['tailored evening trousers', 'bias-cut midi skirt', 'dark straight-leg trousers', 'silk midi skirt'];
 
     const looks = [];
     itinerary.days.forEach((day, dayIndex) => {
@@ -1304,6 +1331,12 @@ const engine = (() => {
       const religious = day.blocks.some(b => /mosque|shrine|temple|religious/i.test(b.title)) || /halal/i.test(day.theme);
       const fine = day.blocks.some(b => /tasting|refined|classic dinner/i.test(b.title));
       const evening = day.blocks.some(b => Number(b.time.split(':')[0]) >= 18);
+      const color = pick(colors, dayIndex);
+      const top = `${color} ${pick(s.warmth === 'cold' ? coldTops : warmTops, dayIndex)}`;
+      const bottom = pick(dayBottoms, dayIndex + 1);
+      const outer = pick(dayOuters, dayIndex + 2);
+      const shoes = profile.accessibility.stepFree ? `cushioned ${pick(dayShoes, dayIndex)}` : pick(dayShoes, dayIndex);
+      const accessory = religious ? 'lightweight coverage scarf' : pick(dayAccessories, dayIndex + 3);
 
       looks.push({
         dayIndex: dayIndex + 1, date: day.date, theme: day.theme,
@@ -1315,11 +1348,11 @@ const engine = (() => {
                profile.accessibility.stepFree ? 'Step-free footwear' : '',
                s.warmth === 'cold' ? 'Layered for cold' : s.warmth === 'warm' ? 'Breathable' : '' ].filter(Boolean).join(' · '),
         items: [
-          { part: 'Top',       value: pieceForTop(false) },
-          { part: 'Bottom',    value: pieceForBottom(false) },
-          { part: 'Outer',     value: s.warmth === 'cold' ? s.outer : 'Light layer if evening cools' },
-          { part: 'Shoes',     value: profile.accessibility.stepFree ? 'Cushioned flats' : (walking ? 'Soft leather sneakers or loafers' : 'Slim loafers') },
-          { part: 'Accessory', value: religious ? 'Silk headscarf' : (s.warmth === 'cold' ? 'Wool scarf' : 'Wide-brim straw hat') },
+          { part: 'Top',       value: top },
+          { part: 'Bottom',    value: bottom },
+          { part: 'Outer',     value: outer },
+          { part: 'Shoes',     value: walking ? shoes : pick(dayShoes, dayIndex + 2) },
+          { part: 'Accessory', value: accessory },
         ],
       });
 
@@ -1331,11 +1364,11 @@ const engine = (() => {
                  modest ? 'Modest cut kept' : '',
                  profile.accessibility.stepFree ? 'Step-free footwear' : '' ].filter(Boolean).join(' · '),
           items: [
-            { part: 'Top',       value: pieceForTop(true) },
-            { part: 'Bottom',    value: pieceForBottom(true) + (modest ? ', midi length' : '') },
-            { part: 'Outer',     value: s.warmth === 'cold' ? 'Long wool coat' : 'Silk-blend blazer' },
-            { part: 'Shoes',     value: profile.accessibility.stepFree ? 'Block-heel or elegant flat' : (fine ? 'Polished heel or brogue' : 'Chelsea boot') },
-            { part: 'Accessory', value: fine ? 'Statement pendant' : 'Slim watch, simple earrings' },
+            { part: 'Top',       value: `${pick(colors, dayIndex + 3)} ${pick(eveningTops, dayIndex)}` },
+            { part: 'Bottom',    value: pick(eveningBottoms, dayIndex + 1) },
+            { part: 'Outer',     value: s.warmth === 'cold' ? pick(dayOuters, dayIndex + 1) : pick(['silk-blend blazer', 'cropped evening jacket', 'lightweight tailored wrap'], dayIndex) },
+            { part: 'Shoes',     value: profile.accessibility.stepFree ? pick(['elegant flat', 'low block heel', 'polished loafer'], dayIndex) : (fine ? pick(['polished heel', 'sleek brogue', 'dress loafer'], dayIndex) : pick(['Chelsea boot', 'minimal slingback', 'polished loafer'], dayIndex)) },
+            { part: 'Accessory', value: pick(['statement pendant', 'sculptural earrings', 'small evening bag', 'slim watch'], dayIndex + 1) },
           ],
         });
       }
