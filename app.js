@@ -40,6 +40,14 @@ const store = (() => {
       arr.push(t); localStorage.setItem(K.trips(e), JSON.stringify(arr));
       return t;
     },
+    update: (e, id, patch) => {
+      const arr = readJSON(K.trips(e), []);
+      const index = arr.findIndex(t => t.id === id);
+      if (index < 0) return null;
+      arr[index] = { ...arr[index], ...patch, updatedAt: Date.now() };
+      localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      return arr[index];
+    },
     remove: (e, id) => {
       const arr = readJSON(K.trips(e), []).filter(t => t.id !== id);
       localStorage.setItem(K.trips(e), JSON.stringify(arr));
@@ -562,7 +570,7 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
 
   // Anthropic-hosted web search tool. Claude runs the searches itself; results
   // come back in the same response, so there's no client-side tool loop to run.
-  const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 8 };
+  const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 12 };
 
   // Collect text across all content blocks (a web-search turn interleaves
   // server_tool_use / web_search_tool_result blocks between the text blocks).
@@ -610,8 +618,7 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
   const askClaude = (userInput) => claudeJSON({ system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024 });
 
   // OpenRouter (OpenAI-compatible, CORS-friendly, routes to any model).
-  // Append ":online" to the model to enable OpenRouter's built-in web search.
-  const openRouterJSON = async ({ model, system, user, maxTokens }) => {
+  const openRouterJSON = async ({ model, system, user, maxTokens, web = false }) => {
     const key = store.ai.openrouterKey.get();
     if (!key) throw new Error('No OpenRouter key set.');
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -626,6 +633,7 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
         model,
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         max_tokens: maxTokens || 1024,
+        ...(web ? { plugins: [{ id: 'web' }] } : {}),
       }),
     });
     if (!res.ok) {
@@ -654,7 +662,17 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
   };
 
   // ---- Full trip generation: web-grounded, weather-aware, profile-personalized ----
-  const GEN_SYSTEM = `You are malem, an expert travel planner. Find REAL, specific, named places (restaurants, shops, sights, neighborhoods, markets) — use the web_search tool when one is available, otherwise draw on your best knowledge of the destination — and account for opening hours, seasonal closures, and events during the trip window. Personalize everything to the traveler's profile (dietary, accessibility, modesty, medical, family, budget, pace, and things to avoid) and to the provided live weather. Prefer specific named places with a one-line reason over generic advice; favor small businesses and genuine local gems, not just the top tourist hits.
+  const GEN_SYSTEM = `You are malem, an expert real-time travel researcher and planner. You MUST search the live web before answering. Verify every named restaurant, shop, market, attraction, neighborhood business, opening-status claim, rating, and review summary from current sources. Never rely only on model memory when a web tool is available.
+
+Personalize everything to the traveler's profile (dietary, accessibility, modesty, medical, family, budget, pace, and things to avoid) and to the provided live Open-Meteo forecast.
+
+SMALL-BUSINESS PRIORITY:
+- At least 70% of food, shopping, and activity recommendations must be independent small businesses, neighborhood institutions, markets, makers, or locally owned operators.
+- Include at most two famous/high-traffic places unless the user explicitly asks for icons.
+- Prefer strong recent local sentiment and specific review evidence over raw popularity.
+- Do not call a place a small business unless a current source supports that inference. Use "unknown" when ownership/size is unclear.
+- Never invent a rating, review count, hours, review quote, URL, or accessibility claim. Use null/empty fields when current evidence is unavailable.
+- Paraphrase review themes; do not reproduce long review text.
 
 Return STRICT JSON ONLY — no prose, no code fences, no citation text — matching EXACTLY this shape:
 {
@@ -671,11 +689,11 @@ Return STRICT JSON ONLY — no prose, no code fences, no citation text — match
     "respectedFromProfile": ["short phrases naming which profile constraints shaped the plan"],
     "days": [
       { "date": "YYYY-MM-DD or empty string", "theme": "short day theme",
-        "blocks": [ { "time": "HH:MM", "title": "Specific, real, named place or activity", "duration": "e.g. 90 min", "kind": "meal|sight|activity|rest|transit|shopping", "respects": ["profile fields this honored, optional"] } ] }
+        "blocks": [ { "time": "HH:MM", "title": "Specific, verified place or activity", "duration": "e.g. 90 min", "kind": "meal|sight|activity|rest|transit|shopping", "respects": ["profile fields this honored, optional"], "businessSize": "small|local-institution|large|public|unknown", "rating": number or null, "reviewCount": integer or null, "reviewSummary": "short paraphrase of recent review themes or empty", "sourceUrl": "current official or reputable listing URL", "reviewSourceUrl": "current review/listing URL or empty", "checkedAt": "YYYY-MM-DD" } ] }
     ]
   },
   "expect": [ { "key": "etiquette|clothing|tipping|prayer|driving|transit|scams|safety|accessibility|phrases|hours|photos|difference", "label": "Human label", "text": "1-2 practical sentences", "confidence": "high|med", "updated": "YYYY-MM", "source": "web or local knowledge" } ],
-  "local": [ { "name": "Real named place", "mix": "famous|small-business|neighborhood|hidden|seasonal", "sub": "what it is, one line", "gemScore": "short note on why it's worth it", "trafficNote": "short note on crowds/best timing" } ],
+  "local": [ { "name": "Verified named place", "mix": "famous|small-business|neighborhood|hidden|seasonal", "businessSize": "small|local-institution|large|public|unknown", "sub": "what it is, one line", "gemScore": "why it is worth it based on current evidence", "trafficNote": "crowds/best timing", "rating": number or null, "reviewCount": integer or null, "reviewSummary": "short paraphrase of recent review themes", "sourceUrl": "current official or reputable listing URL", "reviewSourceUrl": "current review/listing URL or empty", "checkedAt": "YYYY-MM-DD" } ],
   "packing": {
     "lists": [
       {"title":"Pack from home","items":[{"item":"...","why":"..."}],"tone":"good"},
@@ -688,7 +706,7 @@ Return STRICT JSON ONLY — no prose, no code fences, no citation text — match
     "reminders": [ {"when":"Two weeks before","text":"..."}, {"when":"Three days before","text":"..."}, {"when":"Night before","text":"..."}, {"when":"Morning of","text":"..."} ]
   }
 }
-Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cover all 13 keys. Weather must visibly shape clothing, packing, and outdoor timing. Never invent profile constraints the traveler did not state.`;
+Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cover all 13 keys. "local" MUST include at least 10 places and be ordered with small businesses first. Weather must visibly shape clothing, packing, and outdoor timing. Every non-transit itinerary place and every local entry needs a current sourceUrl and checkedAt date. Never invent profile constraints the traveler did not state.`;
 
   const buildGenUser = (trip, profile, weatherObj) => {
     const wxLine = (weatherObj && weatherObj.days && weatherObj.days.length)
@@ -698,6 +716,7 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
       `Trip: ${trip.days} day(s) in "${trip.destination}"${trip.arrivalDate ? `, arriving ${trip.arrivalDate}` : ''}, ${trip.travelers || 1} traveler(s).`,
       `Chosen vibe: ${trip.primaryVibe || 'unspecified'}. Season: ${trip.season || 'unspecified'}.`,
       `Live weather (Open-Meteo): ${wxLine}`,
+      `Research date: ${new Date().toISOString().slice(0, 10)}. Search for current openings, official sites, recent reviews, closures, and neighborhood small businesses now.`,
       `Traveler profile — honor ALL of this and reference it in "respectedFromProfile":\n${JSON.stringify(profile)}`,
       `Now produce the complete JSON bundle for this trip.`,
     ].join('\n\n');
@@ -707,22 +726,30 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
   const generateViaClaude = (trip, profile, weatherObj) =>
     claudeJSON({ system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), tools: [WEB_SEARCH_TOOL], maxTokens: 16000 });
 
-  // OpenAI (GPT): generates from the model's knowledge of real places + the live weather we inject.
+  const responseOutputText = (data) => (data?.output || [])
+    .filter(item => item.type === 'message')
+    .flatMap(item => item.content || [])
+    .filter(item => item.type === 'output_text')
+    .map(item => item.text || '')
+    .join('\n');
+
+  // OpenAI: Responses API with the current web_search tool, so place/review
+  // research is live rather than limited to the model's knowledge cutoff.
   const generateViaOpenAI = async (trip, profile, weatherObj) => {
     const key = store.ai.openaiKey.get();
     if (!key) throw new Error('No OpenAI key set.');
-    const model = store.ai.openaiModel.get();
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const configured = store.ai.openaiModel.get();
+    const model = /^gpt-(?:5\.[4-9]|[6-9])/.test(configured) ? configured : 'gpt-5.4-mini';
+    const res = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model,
-        messages: [
-          { role: 'system', content: GEN_SYSTEM },
-          { role: 'user', content: buildGenUser(trip, profile, weatherObj) },
-        ],
-        response_format: { type: 'json_object' },
-        max_tokens: 8000,
+        instructions: GEN_SYSTEM,
+        input: buildGenUser(trip, profile, weatherObj),
+        tools: [{ type: 'web_search', search_context_size: 'medium' }],
+        tool_choice: 'auto',
+        max_output_tokens: 12000,
       }),
     });
     if (!res.ok) {
@@ -732,16 +759,17 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
       throw new Error(`OpenAI HTTP ${res.status} — ${body}`);
     }
     const data = await res.json();
-    return JSON.parse(data.choices[0].message.content);
+    const text = responseOutputText(data);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('OpenAI web search returned no JSON object.');
+    return JSON.parse(match[0]);
   };
 
-  // OpenRouter: web-grounded generation via the ":online" model suffix (built-in web search).
+  // OpenRouter: the supported web plugin works with fixed models and routers.
   const generateViaOpenRouter = (trip, profile, weatherObj) => {
     const base = store.ai.openrouterModel.get();
-    // Router ids do not accept model-variant suffixes; online search is already
-    // available to the auto router. Concrete model ids can use :online.
-    const model = base.startsWith('openrouter/') || base.includes(':') ? base : `${base}:online`;
-    return openRouterJSON({ model, system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), maxTokens: 8000 });
+    const model = base.replace(/:online$/, '');
+    return openRouterJSON({ model, system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), maxTokens: 12000, web: true });
   };
 
   const generateTrip = async (trip, profile, weatherObj) => {
@@ -798,7 +826,8 @@ const weather = (() => {
       summary: codeText(d.weather_code?.[i]),
     }));
     return { place: g.name, country: g.country || '', admin: g.admin1 || '',
-      lat: g.latitude, lon: g.longitude, timezone: j.timezone || 'auto', days: list };
+      lat: g.latitude, lon: g.longitude, timezone: j.timezone || 'auto', days: list,
+      updatedAt: new Date().toISOString(), source: 'Open-Meteo', sourceUrl: 'https://open-meteo.com/' };
   };
 
   // Compact human/LLM-readable summary line.
@@ -910,8 +939,14 @@ const pinterest = (() => {
   const searchPins = (query) => {
     if (!query) return Promise.resolve([]);
     if (_cache.has(query)) return _cache.get(query);
-    const p = fetchThroughProxy(searchURL(query))
-      .then(extractPinImagesFromHTML)
+    const p = fetch(`/api/pinterest?q=${encodeURIComponent(query)}`)
+      .then(async r => {
+        if (!r.ok) throw new Error(`Pinterest endpoint HTTP ${r.status}`);
+        const data = await r.json();
+        if (!data.images?.length) throw new Error('Pinterest endpoint returned no images');
+        return data.images;
+      })
+      .catch(() => fetchThroughProxy(searchURL(query)).then(extractPinImagesFromHTML))
       .catch((err) => { console.warn('Pinterest search failed:', err.message); return []; });
     _cache.set(query, p);
     return p;
@@ -1428,6 +1463,13 @@ const ui = (() => {
   const $  = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  const safeExternalUrl = (value) => {
+    try {
+      const u = new URL(String(value || ''));
+      return (u.protocol === 'https:' || u.protocol === 'http:') ? u.toString() : '';
+    } catch { return ''; }
+  };
+  const proxiedImage = (value) => value ? `/api/image?url=${encodeURIComponent(value)}` : '';
   const flash = (sel, msg) => { const el = $(sel); if (!el) return; el.textContent = msg; clearTimeout(el._t); el._t = setTimeout(() => (el.textContent = ''), 4500); };
   const parseList = (s) => (s || '').split(',').map(x => x.trim()).filter(Boolean);
   const parseIntList = (s) => parseList(s).map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0);
@@ -1528,10 +1570,11 @@ const ui = (() => {
     // 3) Generate the full, web-grounded, weather-aware, personalized plan (Claude only).
     let wx = null, bundle = null, genError = null;
     const destGuess = titleCase(result.trip.destination);
+    setPendingMessage(`Checking live weather for ${destGuess}…`);
+    try { wx = await weather.forecast(result.trip.destination, result.trip.days); }
+    catch (e) { console.warn('weather lookup failed', e); }
     if (ai.enabled()) {
       setPendingMessage(`Researching ${destGuess} — real places, this week's live weather, and your profile. This can take up to a minute…`);
-      try { wx = await weather.forecast(result.trip.destination, result.trip.days); }
-      catch (e) { console.warn('weather lookup failed', e); }
       try { bundle = await ai.generateTrip(result.trip, merged, wx); }
       catch (e) { console.error('trip generation failed', e); genError = e; }
     }
@@ -1553,9 +1596,9 @@ const ui = (() => {
     } else if (ai.enabled()) {
       replyText = `I saved your ${destName} trip, but the plan didn't finish generating${genError ? ` (${String(genError.message || genError).slice(0, 140)})` : ' (network or key issue)'}. Check your API key in Settings, then start the trip again.`;
     } else if (staticDest) {
-      replyText = result.reply || `Saved your ${destName} trip using built-in demo data. Add an OpenAI or Anthropic API key in Settings to generate live plans.`;
+      replyText = result.reply || `Saved your ${destName} trip with live Open-Meteo weather. Add an OpenRouter, OpenAI, or Anthropic API key in Settings for current web-researched places and reviews.`;
     } else {
-      replyText = `I saved your ${destName} trip. To generate a full plan for anywhere — real places and live weather — add your OpenAI or Anthropic API key in Settings.`;
+      replyText = `I saved your ${destName} trip with live weather. To add current places and reviews, connect OpenRouter, OpenAI, or Anthropic in Settings.`;
     }
     appendChatMessage('assistant', replyText);
     appendTripCard(trip);
@@ -1576,6 +1619,38 @@ const ui = (() => {
   const setPendingMessage = (text) => {
     const el = $('#chat-log .msg[data-pending] p');
     if (el) el.innerHTML = escapeHtml(text).replace(/\n/g, '<br />');
+  };
+
+  const refreshActiveTrip = async () => {
+    const me = auth.current();
+    const trip = me && activeTripFor(me.email);
+    const button = $('#btn-refresh-live');
+    const status = $('#research-status');
+    if (!trip || !button || !status) return;
+    if (!ai.enabled()) {
+      status.textContent = 'Connect OpenRouter, OpenAI, or Anthropic in Settings to refresh web research.';
+      return;
+    }
+    button.disabled = true;
+    button.textContent = 'Refreshing…';
+    status.textContent = 'Checking live weather, current openings, reviews, and neighborhood businesses…';
+    try {
+      const profile = store.profile.load(me.email);
+      const wx = await weather.forecast(trip.destination, trip.days);
+      const bundle = await ai.generateTrip(trip, profile, wx);
+      const updated = store.trips.update(me.email, trip.id, {
+        weather: wx, bundle, researchUpdatedAt: new Date().toISOString(),
+      });
+      if (!updated) throw new Error('Could not update the saved trip.');
+      status.textContent = `Live research refreshed ${new Date().toLocaleString()}.`;
+      renderTripHistory(me);
+      renderItinerary();
+    } catch (error) {
+      status.textContent = `Refresh failed: ${String(error?.message || error).slice(0, 180)}`;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Refresh live research';
+    }
   };
   const titleCase = (s) => String(s || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
@@ -1908,6 +1983,7 @@ const ui = (() => {
     $('#btn-rebuild-packing').addEventListener('click', () => { renderPacking(readPackingReq()); });
     $('#toggle-discover-controls').addEventListener('click', () => { const f = $('#discover-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-discover').addEventListener('click', renderDiscover);
+    $('#btn-refresh-live').addEventListener('click', refreshActiveTrip);
     $('#toggle-local-controls').addEventListener('click', () => { const f = $('#local-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-local').addEventListener('click', renderLocal);
 
@@ -1957,7 +2033,12 @@ const ui = (() => {
     $('#itin-hero').textContent = meta.name || trip.destination;
     $('#itin-vibe-label').textContent = vibe ? vibe.title : trip.primaryVibe;
     $('#itin-kicker').textContent = vibe ? vibe.sub : (meta.plug || '');
-    $('#weather-note').textContent = trip.weather ? weather.describe(trip.weather) : (DATA.weatherLine(trip.destination, trip.season || 'summer') || '');
+    if (trip.weather) {
+      const checked = trip.weather.updatedAt ? new Date(trip.weather.updatedAt).toLocaleString() : '';
+      $('#weather-note').innerHTML = `${escapeHtml(weather.describe(trip.weather))} <a href="https://open-meteo.com/" target="_blank" rel="noopener">Live Open-Meteo</a>${checked ? ` · checked ${escapeHtml(checked)}` : ''}`;
+    } else {
+      $('#weather-note').textContent = DATA.weatherLine(trip.destination, trip.season || 'summer') || '';
+    }
     $('#palette-note').textContent = meta.paletteNote || '';
     $('#palette-swatches').innerHTML = (meta.palette || []).map(c => `<span class="swatch" style="background:${c}"></span>`).join('');
     $('#badge-days').textContent = `${trip.days} day${trip.days > 1 ? 's' : ''}`;
@@ -1970,15 +2051,27 @@ const ui = (() => {
           <h3>Day ${i + 1}${day.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(day.date)}</span>` : ''}</h3>
           <span class="theme">${escapeHtml(day.theme)}</span>
         </header>
-        ${(day.blocks || []).map(b => `
+        ${(day.blocks || []).map(b => {
+          const sourceUrl = safeExternalUrl(b.sourceUrl);
+          const reviewUrl = safeExternalUrl(b.reviewSourceUrl);
+          const evidence = [
+            b.businessSize && b.businessSize !== 'unknown' ? b.businessSize.replace('-', ' ') : '',
+            b.rating != null && b.rating !== '' && Number.isFinite(Number(b.rating)) ? `★ ${Number(b.rating).toFixed(1)}` : '',
+            b.reviewCount != null && b.reviewCount !== '' && Number.isFinite(Number(b.reviewCount)) ? `${Number(b.reviewCount).toLocaleString()} reviews` : '',
+            b.checkedAt ? `checked ${b.checkedAt}` : '',
+          ].filter(Boolean);
+          return `
           <div class="itin-block">
             <div class="when">${escapeHtml(b.time)}<br /><small>${escapeHtml(b.duration)}</small></div>
             <div class="what">
               <strong>${escapeHtml(b.title)}</strong>
               <small>${escapeHtml(b.kind)}</small>
+              ${b.reviewSummary ? `<p class="place-review">${escapeHtml(b.reviewSummary)}</p>` : ''}
+              ${evidence.length || sourceUrl || reviewUrl ? `<div class="place-evidence">${evidence.map(v => `<span>${escapeHtml(v)}</span>`).join('')}${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}${reviewUrl && reviewUrl !== sourceUrl ? `<a href="${escapeHtml(reviewUrl)}" target="_blank" rel="noopener">Reviews ↗</a>` : ''}</div>` : ''}
               ${b.respects ? `<div class="respects">${b.respects.map(r => `<span>${escapeHtml(r)}</span>`).join('')}</div>` : ''}
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </article>`).join('');
   };
 
@@ -2024,10 +2117,10 @@ const ui = (() => {
               const q = itemQuery(it.value);
               const imageQuery = [trip.destination, `day ${look.dayIndex}`, look.theme, look.name, q, it.part, 'fashion product'].filter(Boolean).join(' ');
               const lock = (look.dayIndex * 100) + (lookIndex * 10) + itemIndex + 1;
-              const fallback = engine.stockURL([look.name, it.part, q, trip.destination], 520, 620, lock);
+              const fallback = proxiedImage(engine.stockURL([look.name, it.part, q, trip.destination], 520, 620, lock));
               return `
                 <div class="shuffle-item hasimg" style="left:${slot.left}%;top:${slot.top}%;width:${slot.w}%;--rot:${slot.rot}deg;z-index:${slot.z};">
-                  <img src="${escapeHtml(fallback)}" data-q="${escapeHtml(imageQuery)}" alt="${escapeHtml(it.value)}" loading="lazy" onerror="this.closest('.shuffle-item').classList.remove('hasimg')" />
+                  <img src="${escapeHtml(fallback)}" data-fallback="${escapeHtml(fallback)}" data-q="${escapeHtml(imageQuery)}" alt="${escapeHtml(it.value)}" loading="lazy" />
                   <span class="chip"><span class="k">${escapeHtml(it.part)}</span>${escapeHtml(q)}</span>
                 </div>`;
             }).join('');
@@ -2051,6 +2144,14 @@ const ui = (() => {
     const sl = $('#outfits-settings-link');
     if (sl) sl.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
 
+    root.querySelectorAll('.shuffle-item img').forEach(im => {
+      im.addEventListener('error', () => {
+        const fallback = im.dataset.fallback;
+        if (fallback && im.getAttribute('src') !== fallback) im.src = fallback;
+        else im.closest('.shuffle-item')?.classList.remove('hasimg');
+      });
+    });
+
     // Progressive fill. Google CSE gives product-specific results when configured;
     // otherwise use distinct Pinterest results for each look. The keyless photo
     // URLs rendered above remain visible if either remote search is unavailable.
@@ -2068,7 +2169,7 @@ const ui = (() => {
           if (!images.length || !card.isConnected) return;
           card.querySelectorAll('.shuffle-item img').forEach((im, index) => {
             const src = images[index % images.length];
-            if (src) { im.src = src; im.closest('.shuffle-item').classList.add('hasimg'); }
+            if (src) { im.src = proxiedImage(src); im.closest('.shuffle-item').classList.add('hasimg'); }
           });
         });
       });
@@ -2143,13 +2244,25 @@ const ui = (() => {
       : (DATA.places[trip.destination] ? engine.buildLocal(ctx) : []);
     $('#local-output').innerHTML = places.length ? `
       <div class="places">
-        ${places.map(p => `
+        ${places.map(p => {
+          const sourceUrl = safeExternalUrl(p.sourceUrl);
+          const reviewUrl = safeExternalUrl(p.reviewSourceUrl);
+          const evidence = [
+            p.businessSize && p.businessSize !== 'unknown' ? p.businessSize.replace('-', ' ') : '',
+            p.rating != null && p.rating !== '' && Number.isFinite(Number(p.rating)) ? `★ ${Number(p.rating).toFixed(1)}` : '',
+            p.reviewCount != null && p.reviewCount !== '' && Number.isFinite(Number(p.reviewCount)) ? `${Number(p.reviewCount).toLocaleString()} reviews` : '',
+            p.checkedAt ? `checked ${p.checkedAt}` : '',
+          ].filter(Boolean);
+          return `
           <article class="place" data-mix="${escapeHtml(p.mix)}">
             <header><h4>${escapeHtml(p.name)}</h4><span class="type">${escapeHtml(p.mix.replace('-', ' '))}</span></header>
             <p class="sub">${escapeHtml(p.sub)}</p>
             <p class="score">${escapeHtml(p.gemScore)}</p>
+            ${p.reviewSummary ? `<p class="place-review">${escapeHtml(p.reviewSummary)}</p>` : ''}
+            ${evidence.length || sourceUrl || reviewUrl ? `<div class="place-evidence">${evidence.map(v => `<span>${escapeHtml(v)}</span>`).join('')}${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}${reviewUrl && reviewUrl !== sourceUrl ? `<a href="${escapeHtml(reviewUrl)}" target="_blank" rel="noopener">Reviews ↗</a>` : ''}</div>` : ''}
             <span class="traffic">${escapeHtml(p.trafficNote)}</span>
-          </article>`).join('')}
+          </article>`;
+        }).join('')}
       </div>` : `<p class="hint">Nothing matched — expand the filters.</p>`;
   };
 

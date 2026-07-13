@@ -1021,3 +1021,26 @@ textarea {
   font-size: .66rem; letter-spacing: .16em; text-transform: uppercase; padding-top: .2rem;
 }
 .shuffle-caption .meta { color: var(--ink-3); font-size: .82rem; margin-top: .5rem; font-style: italic; }
+
+/* Live place/review provenance */
+.place-review {
+  margin: .4rem 0; color: var(--ink-2); font-size: .86rem; line-height: 1.45;
+  font-style: italic;
+}
+.place-evidence {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: .45rem 0;
+  font-family: var(--font-sans); font-size: .65rem; letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.place-evidence span,
+.place-evidence a {
+  border: 1px solid var(--hairline); border-radius: 999px; padding: .18rem .45rem;
+  color: var(--ink-2); background: var(--surface-2); text-decoration: none;
+}
+.place-evidence a:hover { border-color: var(--ink); color: var(--ink); }
+#weather-note a { color: inherit; text-underline-offset: .18em; }
+.live-research-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .75rem;
+  margin: 1rem 0 1.25rem;
+}
+.live-research-bar .hint { margin: 0; }

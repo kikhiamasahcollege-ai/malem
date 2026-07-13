@@ -204,6 +204,11 @@
         <span id="badge-vibe">—</span>
       </div>
 
+      <div class="live-research-bar">
+        <button type="button" class="btn ghost" id="btn-refresh-live">Refresh live research</button>
+        <p class="hint" id="research-status" aria-live="polite">Re-check weather, openings, reviews, and local businesses at any time.</p>
+      </div>
+
       <div id="itinerary-output"></div>
     </section>
 
@@ -659,7 +664,7 @@
           <span>OpenRouter</span>
           <span class="conn-status" id="conn-status-openrouter">Not connected</span>
         </legend>
-        <p class="hint">Routes to any model and adds live web search — this powers your trip plans.</p>
+        <p class="hint">Routes to any model and runs live web search for current places, reviews, hours, and closures.</p>
         <label class="field">
           <span>API key</span>
           <input type="password" name="openrouterKey" placeholder="sk-or-…" autocomplete="off" />
@@ -688,6 +693,8 @@
           <select name="openaiModel">
             <option value="gpt-4o-mini" selected>gpt-4o-mini (cheap, fast)</option>
             <option value="gpt-4o">gpt-4o (higher quality)</option>
+            <option value="gpt-5.4-mini">gpt-5.4-mini (live web research)</option>
+            <option value="gpt-5.5">gpt-5.5 (highest quality)</option>
           </select>
         </label>
       </fieldset>
