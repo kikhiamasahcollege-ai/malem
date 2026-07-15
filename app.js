@@ -944,9 +944,9 @@ const pinterest = (() => {
         if (!r.ok) throw new Error(`Pinterest endpoint HTTP ${r.status}`);
         const data = await r.json();
         if (!data.images?.length) throw new Error('Pinterest endpoint returned no images');
-        return data.images;
+        return data.pins?.length ? data.pins : data.images.map(image => ({ image, title: query, sourceUrl: searchURL(query) }));
       })
-      .catch(() => fetchThroughProxy(searchURL(query)).then(extractPinImagesFromHTML))
+      .catch(() => fetchThroughProxy(searchURL(query)).then(extractPinImagesFromHTML).then(images => images.map(image => ({ image, title: query, sourceUrl: searchURL(query) }))))
       .catch((err) => { console.warn('Pinterest search failed:', err.message); return []; });
     _cache.set(query, p);
     return p;
@@ -2322,7 +2322,7 @@ const ui = (() => {
           </div>
           <div class="pin-actions">
             <button type="button" data-outfit-action="save" aria-pressed="${saved}">${saved ? 'Saved' : 'Save'}</button>
-            <button type="button" data-outfit-action="open">Open Pinterest ↗</button>
+            <button type="button" data-outfit-action="open">Open source ↗</button>
             <button type="button" data-outfit-action="hide">Hide</button>
           </div>
         </article>`;
@@ -2347,8 +2347,8 @@ const ui = (() => {
         `${destination} ${look.theme} travel capsule ${look.name} editorial outfit ${styleKeywords}`,
       ].map(q => q.replace(/\s+/g, ' ').trim());
       const intent = `${destination} ${trip.season || ''} ${look.theme} ${look.name} ${look.why || ''} ${pieces} ${modest} ${styleKeywords}`;
-      Promise.all(queries.map(query => pinterest.searchPins(query).then(images => images.slice(0, 12).map((url, resultIndex) => ({
-        id: outfitRecommender.idFor(url), url, query, title: `${look.name} · ${look.theme}`, tags: [destination, trip.season, styleKeywords].filter(Boolean), searchUrl: pinterest.searchURL(query), resultIndex,
+      Promise.all(queries.map(query => pinterest.searchPins(query).then(pins => pins.slice(0, 12).map((pin, resultIndex) => ({
+        id: outfitRecommender.idFor(pin.image), url: pin.image, query, title: pin.title || `${look.name} · ${look.theme}`, tags: [destination, trip.season, look.name, look.theme, styleKeywords].filter(Boolean), searchUrl: pin.sourceUrl || pinterest.searchURL(query), resultIndex,
       })))))
         .then(groups => {
           if (epoch !== outfitRenderEpoch) return;

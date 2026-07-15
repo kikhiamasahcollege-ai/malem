@@ -52,6 +52,39 @@ const fetchWebImageCandidates = async (query) => {
   return response.ok ? extractBingThumbnails(await response.text()) : [];
 };
 
+const safeExternalUrl = (value) => {
+  try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : ''; } catch { return ''; }
+};
+
+const fetchDuckDuckGoCandidates = async (query) => {
+  const headers = {
+    'Accept-Language': 'en-US,en;q=0.8',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36',
+  };
+  const searchPage = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
+  const pageResponse = await fetch(searchPage, { headers, cf: { cacheEverything: true, cacheTtl: 3600 } });
+  if (!pageResponse.ok) return [];
+  const page = await pageResponse.text();
+  const token = page.match(/vqd=[^0-9]*([0-9-]+)/i)?.[1];
+  if (!token) return [];
+  const apiUrl = `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${encodeURIComponent(token)}&f=,,,&p=1`;
+  const response = await fetch(apiUrl, {
+    headers: { ...headers, 'Accept': 'application/json', 'Referer': 'https://duckduckgo.com/' },
+    cf: { cacheEverything: true, cacheTtl: 3600 },
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  return (data.results || []).map(result => {
+    const image = safeExternalUrl(result.thumbnail);
+    let allowed = false;
+    try {
+      const host = new URL(image).hostname;
+      allowed = /^ts[0-9]+\.mm\.bing\.net$/i.test(host) || /^tse[0-9]+\.mm\.bing\.net$/i.test(host) || host === 'th.bing.com';
+    } catch {}
+    return allowed ? { image, title: String(result.title || '').slice(0, 180), sourceUrl: safeExternalUrl(result.url) } : null;
+  }).filter(Boolean).slice(0, 40);
+};
+
 export async function onRequestGet({ request }) {
   const query = (new URL(request.url).searchParams.get('q') || '').trim().slice(0, 240);
   if (!query) return Response.json({ images: [] });
@@ -69,9 +102,19 @@ export async function onRequestGet({ request }) {
     // Pinterest currently serves its logo instead of result data to many
     // server-side requests. Use a public, safe-search image result pool when
     // that happens so the local recommender still has real outfit candidates.
-    const webImages = pinterestImages.length >= 6 ? [] : await fetchWebImageCandidates(query);
-    const images = pinterestImages.length >= 6 ? pinterestImages : webImages;
-    return Response.json({ images, query, source: pinterestImages.length >= 6 ? 'pinterest' : 'web-image-search' }, {
+    let pins;
+    let source;
+    if (pinterestImages.length >= 6) {
+      pins = pinterestImages.map(image => ({ image, title: query, sourceUrl: target })); source = 'pinterest';
+    } else {
+      const duckPins = await fetchDuckDuckGoCandidates(query);
+      if (duckPins.length >= 6) {
+        pins = duckPins; source = 'duckduckgo-image-search';
+      } else {
+        pins = (await fetchWebImageCandidates(query)).map(image => ({ image, title: query, sourceUrl: '' })); source = 'web-image-search';
+      }
+    }
+    return Response.json({ images: pins.map(pin => pin.image), pins, query, source }, {
       headers: { 'Cache-Control': 'public, max-age=900, s-maxage=3600' },
     });
   } catch (error) {
