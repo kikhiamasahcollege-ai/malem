@@ -1022,6 +1022,51 @@ textarea {
 }
 .shuffle-caption .meta { color: var(--ink-3); font-size: .82rem; margin-top: .5rem; font-style: italic; }
 
+/* --- Personalized outfit curation feed --- */
+.recommendation-explainer {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem;
+  padding: .85rem; margin: 0 0 1.5rem; border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg); background: var(--surface-2);
+}
+.recommendation-explainer > div { display: grid; grid-template-columns: 10px 1fr; column-gap: .55rem; align-items: center; }
+.recommendation-explainer strong { font-size: .76rem; font-family: var(--font-sans); letter-spacing: .04em; }
+.recommendation-explainer small { grid-column: 2; color: var(--ink-3); font-size: .68rem; margin-top: .08rem; }
+.algorithm-dot { width: 8px; height: 8px; border-radius: 50%; grid-row: 1 / span 2; }
+.algorithm-dot.visual { background: #b36a3c; }.algorithm-dot.text { background: #466b7a; }.algorithm-dot.behavior { background: #6d638b; }
+.curation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 1.25rem; }
+.curation-card { border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.curation-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; padding: 1rem 1rem .75rem; }
+.curation-heading p { color: var(--ink-3); font-size: .78rem; margin-top: .25rem; }
+.live-chip { flex: none; font-size: .59rem; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); border: 1px solid var(--hairline); border-radius: 99px; padding: .2rem .42rem; }
+.ranked-pins { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; background: var(--hairline); }
+.ranked-pin { min-width: 0; background: var(--surface); position: relative; }
+.pin-image-button { display: block; position: relative; width: 100%; aspect-ratio: 3 / 4; border: 0; padding: 0; overflow: hidden; background: var(--surface-2); cursor: zoom-in; }
+.pin-image-button img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .25s ease; }
+.pin-image-button:hover img { transform: scale(1.025); }
+.rank-badge { position: absolute; left: .4rem; bottom: .4rem; padding: .2rem .4rem; border-radius: 99px; background: rgba(20,16,12,.7); color: #fff; font-size: .56rem; letter-spacing: .035em; }
+.ranked-pin-meta { display: grid; gap: .18rem; padding: .48rem .55rem .38rem; }
+.ranked-pin-meta strong { font-family: var(--font-serif); font-size: .75rem; line-height: 1.2; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ranked-pin-meta span { color: var(--ink-3); font-size: .55rem; line-height: 1.3; }
+.pin-actions { display: flex; flex-wrap: wrap; gap: .25rem; padding: 0 .5rem .55rem; }
+.pin-actions button, .text-button { border: 0; background: transparent; color: var(--ink-2); padding: .18rem .28rem; font: inherit; font-size: .58rem; cursor: pointer; text-decoration: underline; text-underline-offset: .18em; }
+.pin-actions button[aria-pressed="true"] { color: var(--ink); font-weight: 700; text-decoration: none; }
+.ranked-pin.is-zoomed { grid-column: span 2; }
+.ranked-pin.is-zoomed .pin-image-button { aspect-ratio: 4 / 5; cursor: zoom-out; }
+.ranked-pin.image-failed .pin-image-button::after { content: 'Image unavailable'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: .7rem; }
+.ranked-pin.image-failed img { opacity: 0; }
+.wardrobe-brief { padding: .75rem 1rem 1rem; border-top: 1px solid var(--hairline); }
+.wardrobe-brief summary { cursor: pointer; color: var(--ink-3); font-size: .72rem; }
+.wardrobe-brief .look-items { list-style: none; padding: .6rem 0 0; margin: 0; display: grid; gap: .25rem; }
+.wardrobe-brief .look-items li { display: grid; grid-template-columns: 70px 1fr; gap: .5rem; font-family: var(--font-serif); font-size: .78rem; }
+.wardrobe-brief .look-items .k { font-family: var(--font-sans); color: var(--ink-3); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase; padding-top: .18rem; }
+.pin-skeleton { aspect-ratio: 3 / 4; background: linear-gradient(100deg, var(--surface-2) 20%, var(--bg) 45%, var(--surface-2) 70%); background-size: 200% 100%; animation: pin-shimmer 1.25s linear infinite; }
+.recommendation-empty { grid-column: 1 / -1; padding: 2rem; background: var(--surface); color: var(--ink-3); font-size: .82rem; }
+@keyframes pin-shimmer { to { background-position-x: -200%; } }
+@media (max-width: 640px) {
+  .recommendation-explainer { grid-template-columns: 1fr; }
+  .ranked-pins { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* Live place/review provenance */
 .place-review {
   margin: .4rem 0; color: var(--ink-2); font-size: .86rem; line-height: 1.45;

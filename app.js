@@ -956,6 +956,142 @@ const pinterest = (() => {
   return { buildQuery, searchPins, searchURL, clearCache };
 })();
 
+// ---------- outfitRecommender: a tiny, local Pinterest-style ranking stack ----------
+// This keeps three compact indexes in localStorage: semantic vectors for search,
+// visual vectors sampled from loaded images, and implicit feedback events. It is
+// deliberately browser-sized so personalization works on Pages without a new
+// database account or a heavyweight model download.
+const outfitRecommender = (() => {
+  const VECTOR_KEY = 'malem.outfitVectors.v2';
+  const EVENT_KEY = 'malem.outfitEvents.v2';
+  const TEXT_DIMS = 64;
+  const MAX_VECTORS = 320;
+  const MAX_EVENTS = 800;
+  const STOP = new Set('a an and are as at be by for from in is it look of on or outfit style the to with inspiration fashion day'.split(' '));
+  const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } };
+  const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { console.warn('Outfit taste storage full:', error.message); } };
+  const hash = (value) => {
+    let h = 2166136261;
+    for (const ch of String(value || '')) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  };
+  const idFor = (url) => `pin-${hash(url).toString(36)}`;
+  const normalize = (values) => {
+    const length = Math.sqrt(values.reduce((sum, v) => sum + (v * v), 0)) || 1;
+    return values.map(v => Number((v / length).toFixed(5)));
+  };
+  const cosine = (a, b) => {
+    if (!a?.length || !b?.length || a.length !== b.length) return 0;
+    let total = 0; for (let i = 0; i < a.length; i++) total += a[i] * b[i];
+    return Math.max(-1, Math.min(1, total));
+  };
+  const tokens = (text) => {
+    const words = String(text || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !STOP.has(w));
+    return [...words, ...words.slice(0, -1).map((word, i) => `${word}_${words[i + 1]}`)];
+  };
+  // Feature hashing gives us a dense-retrieval-style semantic index with no
+  // external model payload. Bigrams preserve useful phrases such as linen shirt.
+  const textVector = (text) => {
+    const vector = Array(TEXT_DIMS).fill(0);
+    tokens(text).forEach((token, index) => {
+      const h = hash(token); const slot = h % TEXT_DIMS;
+      vector[slot] += (h & 1 ? 1 : -1) * (token.includes('_') ? 1.35 : 1) / Math.sqrt(index + 1);
+    });
+    return normalize(vector);
+  };
+  const centroid = (weighted) => {
+    if (!weighted.length) return null;
+    const dims = weighted[0].vector.length; const out = Array(dims).fill(0); let weightSum = 0;
+    weighted.forEach(({ vector, weight }) => { for (let i = 0; i < dims; i++) out[i] += vector[i] * weight; weightSum += Math.abs(weight); });
+    return weightSum ? normalize(out.map(v => v / weightSum)) : null;
+  };
+  const vectorDb = () => read(VECTOR_KEY, {});
+  const events = () => read(EVENT_KEY, []);
+  const upsert = (candidate, visual) => {
+    const db = vectorDb(); const id = candidate.id || idFor(candidate.url);
+    db[id] = {
+      id, url: candidate.url, title: candidate.title, query: candidate.query,
+      text: candidate.text || textVector(`${candidate.title || ''} ${candidate.query || ''} ${(candidate.tags || []).join(' ')}`),
+      visual: visual || db[id]?.visual || null, updatedAt: Date.now(),
+    };
+    const trimmed = Object.fromEntries(Object.entries(db).sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, MAX_VECTORS));
+    write(VECTOR_KEY, trimmed); return trimmed[id];
+  };
+  const eventWeight = (type) => ({ save: 4.5, unsave: -4.5, hide: -5, open: 1.25, zoom: 1.75 }[type] || 0);
+  const record = (user, candidate, type) => {
+    upsert(candidate);
+    const list = events();
+    list.push({ user, itemId: candidate.id, type, at: Date.now(), session: sessionStorage.getItem('malem.outfitSession') || '' });
+    write(EVENT_KEY, list.slice(-MAX_EVENTS));
+  };
+  const isSaved = (user, itemId) => {
+    const latest = events().filter(e => e.user === user && e.itemId === itemId && (e.type === 'save' || e.type === 'unsave')).at(-1);
+    return latest?.type === 'save';
+  };
+  const userProfile = (user) => {
+    const db = vectorDb(); const list = events(); const now = Date.now();
+    const mine = list.filter(e => e.user === user && db[e.itemId]);
+    const weighted = mine.map(e => {
+      const ageDays = Math.max(0, (now - e.at) / 86400000);
+      return { entry: db[e.itemId], weight: eventWeight(e.type) * Math.exp(-ageDays / 120) };
+    }).filter(x => x.weight);
+    return {
+      text: centroid(weighted.map(x => ({ vector: x.entry.text, weight: x.weight }))),
+      visual: centroid(weighted.filter(x => x.entry.visual).map(x => ({ vector: x.entry.visual, weight: x.weight }))),
+      eventCount: mine.length,
+    };
+  };
+  const directAffinity = (user, itemId) => {
+    const relevant = events().filter(e => e.user === user && e.itemId === itemId).slice(-8);
+    return Math.tanh(relevant.reduce((sum, e) => sum + eventWeight(e.type), 0) / 5);
+  };
+  const crowdAffinity = (user, itemId) => {
+    const others = events().filter(e => e.user !== user && e.itemId === itemId);
+    if (!others.length) return 0;
+    return Math.tanh(others.reduce((sum, e) => sum + eventWeight(e.type), 0) / 8);
+  };
+  const rank = (candidates, intent, user, limit = 6) => {
+    const target = textVector(intent); const profile = userProfile(user); const db = vectorDb();
+    const scored = candidates.map(candidate => {
+      candidate.id ||= idFor(candidate.url);
+      candidate.text ||= textVector(`${candidate.title || ''} ${candidate.query || ''} ${(candidate.tags || []).join(' ')}`);
+      const stored = db[candidate.id];
+      const textMatch = (cosine(candidate.text, target) + 1) / 2;
+      const visualMatch = profile.visual && stored?.visual ? (cosine(stored.visual, profile.visual) + 1) / 2 : .5;
+      const tasteMatch = profile.text ? (cosine(candidate.text, profile.text) + 1) / 2 : .5;
+      const collaborative = Math.max(0, Math.min(1, .5 + (.28 * directAffinity(user, candidate.id)) + (.12 * crowdAffinity(user, candidate.id)) + (.2 * (tasteMatch - .5))));
+      return { ...candidate, textMatch, visualMatch, collaborative, score: (.5 * textMatch) + (.3 * visualMatch) + (.2 * collaborative) };
+    });
+    // Maximal marginal relevance prevents near-identical search-result clusters.
+    const selected = [];
+    while (scored.length && selected.length < limit) {
+      scored.forEach(candidate => {
+        const duplicate = selected.length ? Math.max(...selected.map(chosen => (cosine(candidate.text, chosen.text) + 1) / 2)) : 0;
+        candidate.mmr = candidate.score - (.16 * duplicate);
+      });
+      scored.sort((a, b) => b.mmr - a.mmr);
+      selected.push(scored.shift());
+    }
+    return { candidates: selected, profile };
+  };
+  // A 4x4 RGB grid is a small image embedding: it captures palette and visual
+  // layout well enough for similarity ranking while staying fast and private.
+  const captureVisual = (img, candidate) => {
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 4;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(img, 0, 0, 4, 4);
+      const pixels = context.getImageData(0, 0, 4, 4).data; const values = [];
+      for (let i = 0; i < pixels.length; i += 4) values.push(pixels[i] / 255, pixels[i + 1] / 255, pixels[i + 2] / 255);
+      upsert(candidate, normalize(values));
+    } catch (error) { console.warn('Could not index outfit image:', error.message); }
+  };
+  const clearUser = (user) => write(EVENT_KEY, events().filter(e => e.user !== user));
+  const stats = (user) => ({ indexed: Object.keys(vectorDb()).length, signals: events().filter(e => e.user === user).length, ...userProfile(user) });
+  try { if (!sessionStorage.getItem('malem.outfitSession')) sessionStorage.setItem('malem.outfitSession', `s${Date.now().toString(36)}`); } catch {}
+  return { idFor, textVector, rank, record, isSaved, captureVisual, clearUser, stats };
+})();
+
 // ---------- engine ----------
 const engine = (() => {
   const vibeThemes = {
@@ -2108,107 +2244,144 @@ const ui = (() => {
       </article>`).join('');
   };
 
-  // Flat-lay slots (percent of board) per wardrobe part — a Shuffles-style collage.
-  const OUTFIT_SLOTS = {
-    Top:       { left: 4,  top: 3,  w: 46, rot: -3, z: 3 },
-    Outer:     { left: 48, top: 1,  w: 45, rot: 4,  z: 2 },
-    Bottom:    { left: 46, top: 37, w: 40, rot: 2,  z: 1 },
-    Shoes:     { left: 3,  top: 58, w: 38, rot: -5, z: 4 },
-    Accessory: { left: 60, top: 60, w: 30, rot: 6,  z: 5 },
-  };
   // Concise product query from a verbose look value ("Cotton tee or linen shirt" -> "Cotton tee").
   const itemQuery = (v) => String(v || '').split(/\bor\b/i)[0].replace(/,.*$/, '').trim();
+  let outfitRenderEpoch = 0;
 
   const renderOutfits = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
+    const epoch = ++outfitRenderEpoch;
     const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
     const { looks } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
+    const destination = trip.bundle?.destinationMeta?.name || DATA.destinations.find(d => d.key === trip.destination)?.name || titleCase(trip.destination);
+    const styleKeywords = store.pinterest.extraKeywords.get();
+    const user = me.email;
 
-    $('#outfits-source').innerHTML = imageSearch.hasKeys()
-      ? `Each day uses a distinct search built from its activities, look, weather, and destination, with real product photos.`
-      : `Each day uses its own Pinterest inspiration search, with keyless fashion photos shown immediately. Add a Google image-search key in <a href="#" id="outfits-settings-link">Settings</a> for more product-specific results.`;
+    $('#outfits-source').innerHTML = `Real Pinterest results are retrieved with several intent searches, then ranked locally by text relevance, visual similarity, and your Save/Open/Zoom/Hide history. Your taste vectors stay in this browser. <button type="button" class="text-button" id="outfits-reset-taste">Reset learned taste</button>`;
 
     const byDay = {};
     looks.forEach(l => { (byDay[l.dayIndex] ||= []).push(l); });
     const root = $('#outfits-output');
+    const stats = outfitRecommender.stats(user);
 
-    root.innerHTML = Object.keys(byDay).map(k => {
+    root.innerHTML = `<div class="recommendation-explainer">
+      <div><span class="algorithm-dot visual"></span><strong>Visual vectors</strong><small>${stats.indexed} images indexed</small></div>
+      <div><span class="algorithm-dot text"></span><strong>Text retrieval</strong><small>destination + weather + wardrobe</small></div>
+      <div><span class="algorithm-dot behavior"></span><strong>Collaborative rank</strong><small>${stats.signals} personal signals</small></div>
+    </div>` + Object.keys(byDay).map(k => {
       const dayLooks = byDay[k]; const first = dayLooks[0];
       return `
         <div class="outfit-day-head">
           <h3>Day ${escapeHtml(k)}${first.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(first.date)}</span>` : ''}</h3>
           <p class="theme">${escapeHtml(first.theme)}</p>
         </div>
-        <div class="shuffle-grid">
+        <div class="curation-grid">
           ${dayLooks.map((look, lookIndex) => {
-            const pinQuery = pinterest.buildQuery(trip, profile, look);
-            const search = pinterest.searchURL(pinQuery);
             const lookId = `look-${look.dayIndex}-${lookIndex}`;
-            const board = look.items.map((it, itemIndex) => {
-              const slot = OUTFIT_SLOTS[it.part] || { left: 30, top: 32, w: 36, rot: 0, z: 1 };
-              const q = itemQuery(it.value);
-              const imageQuery = [trip.destination, `day ${look.dayIndex}`, look.theme, look.name, q, it.part, 'fashion product'].filter(Boolean).join(' ');
-              const lock = (look.dayIndex * 100) + (lookIndex * 10) + itemIndex + 1;
-              const fallback = proxiedImage(engine.stockURL([look.name, it.part, q, trip.destination], 520, 620, lock));
-              return `
-                <div class="shuffle-item hasimg" style="left:${slot.left}%;top:${slot.top}%;width:${slot.w}%;--rot:${slot.rot}deg;z-index:${slot.z};">
-                  <img src="${escapeHtml(fallback)}" data-fallback="${escapeHtml(fallback)}" data-q="${escapeHtml(imageQuery)}" alt="${escapeHtml(it.value)}" loading="lazy" />
-                  <span class="chip"><span class="k">${escapeHtml(it.part)}</span>${escapeHtml(q)}</span>
-                </div>`;
-            }).join('');
             const itemsList = look.items.map(it => `<li><span class="k">${escapeHtml(it.part)}</span><span>${escapeHtml(it.value)}</span></li>`).join('');
             return `
-              <article class="shuffle-card" data-look-id="${escapeHtml(lookId)}" data-pin-query="${escapeHtml(pinQuery)}">
-                <div class="shuffle-board">
-                  ${board}
-                  <a class="shuffle-pin" href="${escapeHtml(search)}" target="_blank" rel="noopener" title="Find similar on Pinterest">Pinterest ↗</a>
+              <article class="curation-card" data-look-id="${escapeHtml(lookId)}">
+                <div class="curation-heading">
+                  <div><span class="eyebrow">${escapeHtml(look.name)}</span><p>${escapeHtml(look.why || '')}</p></div>
+                  <span class="live-chip">ranking live</span>
                 </div>
-                <div class="shuffle-caption">
-                  <span class="eyebrow">${escapeHtml(look.name)}</span>
+                <div class="ranked-pins" data-ranked-pins><div class="pin-skeleton"></div><div class="pin-skeleton"></div><div class="pin-skeleton"></div></div>
+                <details class="wardrobe-brief">
+                  <summary>Wardrobe brief used for retrieval</summary>
                   <ul class="look-items">${itemsList}</ul>
-                  ${look.why ? `<div class="meta">${escapeHtml(look.why)}</div>` : ''}
-                </div>
+                </details>
               </article>`;
           }).join('')}
         </div>`;
     }).join('');
 
-    const sl = $('#outfits-settings-link');
-    if (sl) sl.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
-
-    root.querySelectorAll('.shuffle-item img').forEach(im => {
-      im.addEventListener('error', () => {
-        const fallback = im.dataset.fallback;
-        if (fallback && im.getAttribute('src') !== fallback) im.src = fallback;
-        else im.closest('.shuffle-item')?.classList.remove('hasimg');
+    const pools = new Map();
+    const claimedUrls = new Set();
+    const paint = (lookId) => {
+      const context = pools.get(lookId); const container = root.querySelector(`[data-look-id="${lookId}"] [data-ranked-pins]`);
+      if (!context || !container || epoch !== outfitRenderEpoch) return;
+      const ranked = outfitRecommender.rank(context.candidates, context.intent, user, 6);
+      context.ranked = ranked.candidates;
+      if (!ranked.candidates.length) {
+        container.innerHTML = `<div class="recommendation-empty">Pinterest did not return images for this look. <a href="${escapeHtml(pinterest.searchURL(context.queries[0]))}" target="_blank" rel="noopener">Open the search ↗</a></div>`;
+        return;
+      }
+      ranked.candidates.forEach(candidate => claimedUrls.add(candidate.url));
+      container.innerHTML = ranked.candidates.map((candidate, index) => {
+        const saved = outfitRecommender.isSaved(user, candidate.id);
+        const confidence = Math.round(candidate.score * 100);
+        return `<article class="ranked-pin" data-candidate-id="${escapeHtml(candidate.id)}" style="--rank:${index + 1}">
+          <button type="button" class="pin-image-button" data-outfit-action="zoom" aria-label="Zoom outfit inspiration ${index + 1}">
+            <img src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(candidate.title)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
+            <span class="rank-badge">#${index + 1} · ${confidence}% match</span>
+          </button>
+          <div class="ranked-pin-meta">
+            <strong>${escapeHtml(candidate.title)}</strong>
+            <span>${Math.round(candidate.textMatch * 100)}% text · ${Math.round(candidate.visualMatch * 100)}% visual · ${Math.round(candidate.collaborative * 100)}% taste</span>
+          </div>
+          <div class="pin-actions">
+            <button type="button" data-outfit-action="save" aria-pressed="${saved}">${saved ? 'Saved' : 'Save'}</button>
+            <button type="button" data-outfit-action="open">Open Pinterest ↗</button>
+            <button type="button" data-outfit-action="hide">Hide</button>
+          </div>
+        </article>`;
+      }).join('');
+      container.querySelectorAll('.ranked-pin img').forEach(img => {
+        const candidate = ranked.candidates.find(c => c.id === img.closest('[data-candidate-id]')?.dataset.candidateId);
+        if (!candidate) return;
+        const capture = () => outfitRecommender.captureVisual(img, candidate);
+        if (img.complete && img.naturalWidth) capture(); else img.addEventListener('load', capture, { once: true });
+        img.addEventListener('error', () => img.closest('.ranked-pin')?.classList.add('image-failed'), { once: true });
       });
+    };
+
+    Object.values(byDay).flat().forEach((look, flatIndex) => {
+      const lookIndex = byDay[look.dayIndex].indexOf(look); const lookId = `look-${look.dayIndex}-${lookIndex}`;
+      const base = pinterest.buildQuery(trip, profile, look);
+      const pieces = look.items.map(it => itemQuery(it.value)).join(' ');
+      const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
+      const queries = [
+        base,
+        `${destination} ${trip.season || ''} ${look.name} ${pieces} ${modest} street style full outfit ${styleKeywords}`,
+        `${destination} ${look.theme} travel capsule ${look.name} editorial outfit ${styleKeywords}`,
+      ].map(q => q.replace(/\s+/g, ' ').trim());
+      const intent = `${destination} ${trip.season || ''} ${look.theme} ${look.name} ${look.why || ''} ${pieces} ${modest} ${styleKeywords}`;
+      Promise.all(queries.map(query => pinterest.searchPins(query).then(images => images.slice(0, 12).map((url, resultIndex) => ({
+        id: outfitRecommender.idFor(url), url, query, title: `${look.name} · ${look.theme}`, tags: [destination, trip.season, styleKeywords].filter(Boolean), searchUrl: pinterest.searchURL(query), resultIndex,
+      })))))
+        .then(groups => {
+          if (epoch !== outfitRenderEpoch) return;
+          const seen = new Set(); const candidates = groups.flat().filter(candidate => !claimedUrls.has(candidate.url) && !seen.has(candidate.url) && seen.add(candidate.url));
+          pools.set(lookId, { candidates, intent, queries }); paint(lookId);
+        })
+        .catch(error => {
+          console.warn('Outfit candidate retrieval failed:', error.message);
+          pools.set(lookId, { candidates: [], intent, queries }); paint(lookId);
+        });
     });
 
-    // Progressive fill. Google CSE gives product-specific results when configured;
-    // otherwise use distinct Pinterest results for each look. The keyless photo
-    // URLs rendered above remain visible if either remote search is unavailable.
-    if (imageSearch.hasKeys()) {
-      const imgs = Array.from(root.querySelectorAll('.shuffle-item img[data-q]'));
-      imgs.forEach(im => {
-        imageSearch.first(im.getAttribute('data-q')).then(src => {
-          if (!src) return;
-          im.src = src; im.closest('.shuffle-item').classList.add('hasimg');
-        });
-      });
-    } else {
-      root.querySelectorAll('.shuffle-card[data-pin-query]').forEach(card => {
-        pinterest.searchPins(card.dataset.pinQuery).then(images => {
-          if (!images.length || !card.isConnected) return;
-          card.querySelectorAll('.shuffle-item img').forEach((im, index) => {
-            // Do not repeat one Pinterest result across every wardrobe piece;
-            // unmatched slots keep their distinct, proxied keyless photos.
-            const src = images[index];
-            if (src) { im.src = proxiedImage(src); im.closest('.shuffle-item').classList.add('hasimg'); }
-          });
-        });
-      });
-    }
+    root.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-outfit-action]'); if (!button) return;
+      const pin = button.closest('[data-candidate-id]'); const card = button.closest('[data-look-id]');
+      const context = card && pools.get(card.dataset.lookId); const candidate = context?.ranked?.find(c => c.id === pin?.dataset.candidateId);
+      if (!candidate) return;
+      const action = button.dataset.outfitAction;
+      if (action === 'zoom') {
+        pin.classList.toggle('is-zoomed'); outfitRecommender.record(user, candidate, 'zoom');
+      } else if (action === 'open') {
+        outfitRecommender.record(user, candidate, 'open'); window.open(candidate.searchUrl, '_blank', 'noopener');
+      } else if (action === 'save') {
+        outfitRecommender.record(user, candidate, outfitRecommender.isSaved(user, candidate.id) ? 'unsave' : 'save'); paint(card.dataset.lookId);
+      } else if (action === 'hide') {
+        outfitRecommender.record(user, candidate, 'hide'); context.candidates = context.candidates.filter(c => c.id !== candidate.id); paint(card.dataset.lookId);
+      }
+    });
+
+    $('#outfits-reset-taste')?.addEventListener('click', () => {
+      if (!confirm('Clear the outfit clicks and saves learned in this browser?')) return;
+      outfitRecommender.clearUser(user); renderOutfits();
+    });
   };
 
   const readPackingReq = () => {
