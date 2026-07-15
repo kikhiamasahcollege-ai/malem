@@ -2258,7 +2258,7 @@ const ui = (() => {
     const styleKeywords = store.pinterest.extraKeywords.get();
     const user = me.email;
 
-    $('#outfits-source').innerHTML = `Real Pinterest results are retrieved with several intent searches, then ranked locally by text relevance, visual similarity, and your Save/Open/Zoom/Hide history. Your taste vectors stay in this browser. <button type="button" class="text-button" id="outfits-reset-taste">Reset learned taste</button>`;
+    $('#outfits-source').innerHTML = `Real web outfit results are retrieved with several Pinterest-style intent searches, then ranked locally by text relevance, visual similarity, and your Save/Open/Zoom/Hide history. Your taste vectors stay in this browser. <button type="button" class="text-button" id="outfits-reset-taste">Reset learned taste</button>`;
 
     const byDay = {};
     looks.forEach(l => { (byDay[l.dayIndex] ||= []).push(l); });

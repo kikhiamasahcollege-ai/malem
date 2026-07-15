@@ -8,11 +8,16 @@ const ALLOWED_HOSTS = new Set([
   'images.pexels.com',
 ]);
 
+const isAllowedHost = (hostname) => ALLOWED_HOSTS.has(hostname)
+  || /^ts[0-9]+\.mm\.bing\.net$/i.test(hostname)
+  || /^tse[0-9]+\.mm\.bing\.net$/i.test(hostname)
+  || hostname === 'th.bing.com';
+
 export async function onRequestGet({ request }) {
   const raw = new URL(request.url).searchParams.get('url') || '';
   let target;
   try { target = new URL(raw); } catch { return new Response('Invalid image URL', { status: 400 }); }
-  if (target.protocol !== 'https:' || !ALLOWED_HOSTS.has(target.hostname)) {
+  if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
     return new Response('Image host not allowed', { status: 403 });
   }
 
