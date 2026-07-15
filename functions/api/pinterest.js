@@ -74,7 +74,9 @@ const fetchDuckDuckGoCandidates = async (query) => {
   });
   if (!response.ok) return [];
   const data = await response.json();
-  return (data.results || []).map(result => {
+  const fashionWords = /outfit|dress|fashion|style|shirt|blouse|trouser|pants|skirt|shoe|loafer|sandal|coat|jacket|blazer|tunic|linen|silk|cotton|wear|wardrobe|clothes|clothing|modest|satin|sneaker|bag|scarf|kaftan|jeans|cardigan/i;
+  const travelNoise = /tour package|travel guide|hotel|itinerary|things to do|tripadvisor|booking\.com|guided tour/i;
+  return (data.results || []).filter(result => fashionWords.test(result.title || '') && !travelNoise.test(result.title || '')).map(result => {
     const image = safeExternalUrl(result.thumbnail);
     let allowed = false;
     try {

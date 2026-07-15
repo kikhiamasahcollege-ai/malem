@@ -2266,9 +2266,9 @@ const ui = (() => {
     const stats = outfitRecommender.stats(user);
 
     root.innerHTML = `<div class="recommendation-explainer">
-      <div><span class="algorithm-dot visual"></span><strong>Visual vectors</strong><small>${stats.indexed} images indexed</small></div>
+      <div><span class="algorithm-dot visual"></span><strong>Visual vectors</strong><small data-vector-count>${stats.indexed} images indexed</small></div>
       <div><span class="algorithm-dot text"></span><strong>Text retrieval</strong><small>destination + weather + wardrobe</small></div>
-      <div><span class="algorithm-dot behavior"></span><strong>Collaborative rank</strong><small>${stats.signals} personal signals</small></div>
+      <div><span class="algorithm-dot behavior"></span><strong>Collaborative rank</strong><small data-signal-count>${stats.signals} personal signals</small></div>
     </div>` + Object.keys(byDay).map(k => {
       const dayLooks = byDay[k]; const first = dayLooks[0];
       return `
@@ -2296,6 +2296,12 @@ const ui = (() => {
         </div>`;
     }).join('');
 
+    const updateRecommenderStats = () => {
+      const current = outfitRecommender.stats(user);
+      const vectors = root.querySelector('[data-vector-count]'); const signals = root.querySelector('[data-signal-count]');
+      if (vectors) vectors.textContent = `${current.indexed} images indexed`;
+      if (signals) signals.textContent = `${current.signals} personal signals`;
+    };
     const pools = new Map();
     const claimedUrls = new Set();
     const paint = (lookId) => {
@@ -2330,7 +2336,7 @@ const ui = (() => {
       container.querySelectorAll('.ranked-pin img').forEach(img => {
         const candidate = ranked.candidates.find(c => c.id === img.closest('[data-candidate-id]')?.dataset.candidateId);
         if (!candidate) return;
-        const capture = () => outfitRecommender.captureVisual(img, candidate);
+        const capture = () => { outfitRecommender.captureVisual(img, candidate); updateRecommenderStats(); };
         if (img.complete && img.naturalWidth) capture(); else img.addEventListener('load', capture, { once: true });
         img.addEventListener('error', () => img.closest('.ranked-pin')?.classList.add('image-failed'), { once: true });
       });
@@ -2376,6 +2382,7 @@ const ui = (() => {
       } else if (action === 'hide') {
         outfitRecommender.record(user, candidate, 'hide'); context.candidates = context.candidates.filter(c => c.id !== candidate.id); paint(card.dataset.lookId);
       }
+      updateRecommenderStats();
     });
 
     $('#outfits-reset-taste')?.addEventListener('click', () => {
