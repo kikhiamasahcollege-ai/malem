@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>Privacy policy — malem</title>
-<meta name="description" content="malem is a client-side travel-planning prototype. This page describes exactly what it does and does not do with your data." />
+<meta name="description" content="How malem stores account and trip data, uses travel providers, and handles public journal entries." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="./styles.css" />
 <style>
@@ -28,62 +28,60 @@
 <div class="doc">
   <a class="back" href="./">← Back to malem</a>
 
-  <span class="updated">Updated 11 July 2026</span>
+  <span class="updated">Updated 19 July 2026</span>
   <h1>Privacy policy</h1>
-  <p>malem is a prototype travel-planning website. It is a static site that runs entirely in your browser. This page describes exactly what it does and does not do with your information.</p>
+  <p>This page explains what the Malem web service stores, what remains on your device, and when information is sent to travel-planning or image providers.</p>
 
   <h2>Short version</h2>
-  <p>malem does not run a server that collects your data. Everything you type, save, and connect stays inside your browser's local storage on your own device. When you use an optional integration (OpenAI, Anthropic, Pinterest), your browser talks directly to that provider using a key or token that you provide — that data is subject to <em>their</em> privacy policy, not ours.</p>
+  <p>Your account, profile, trips, group, and journal are stored by Malem so they are available anywhere you sign in. The browser also keeps a local cache. Passwords are never stored as readable text. Journal entries are private unless you explicitly mark an entry public. Malem does not use advertising trackers or sell personal information.</p>
 
-  <h2>What malem stores on your device</h2>
-  <p>The following are saved in this browser's <code>localStorage</code> and are never sent anywhere by malem itself:</p>
+  <h2>What Malem stores for your account</h2>
   <ul>
-    <li>Your prototype account details (name, email, and a non-cryptographic password hash).</li>
+    <li>Your name and email address.</li>
     <li>Your travel profile (vibes, budget, pace, dietary preferences, accessibility notes, religious and cultural notes, modesty preferences, medical notes, family notes, places to avoid).</li>
-    <li>Your saved trips and their chat history.</li>
+    <li>Your saved trip requests, generated plans, and current active trip.</li>
     <li>Your group members' names and constraints.</li>
-    <li>Your trip journal entries, including entries you mark as public.</li>
-    <li>Any API keys you choose to enter (OpenAI, Anthropic).</li>
-    <li>Any Pinterest access token issued to you after you complete the Pinterest OAuth flow, plus the App ID you configured.</li>
-    <li>Your interface preferences (theme).</li>
+    <li>Your trip journal entries and whether you opted to publish each entry.</li>
   </ul>
-  <p>Clearing your browser's site data for this domain permanently deletes everything above.</p>
+  <p>The same customer content is cached in this browser for fast rendering and degraded operation. Clearing browser data removes that local cache but does not delete the account. Use <strong>Settings → Delete account</strong> to permanently remove the account, sessions, and synchronized content.</p>
 
-  <h2>What malem does not do</h2>
+  <h2>What remains on this device</h2>
+  <p>Theme and interface preferences, optional model/provider settings, optional provider API keys, model cost traces, image-search keywords, and outfit-ranking actions remain in this browser and are not synchronized to your Malem account. Clearing this site's browser data removes them.</p>
+
+  <h2>What Malem does not do</h2>
   <ul>
-    <li>malem does not run any backend server that receives, stores, or logs your data.</li>
-    <li>malem does not use analytics, tracking pixels, advertising SDKs, or fingerprinting.</li>
-    <li>malem does not set third-party cookies.</li>
-    <li>malem does not sell, share, or transmit your data to any third party.</li>
-    <li>malem does not read your Pinterest content beyond the boards and pins on the specific board you select.</li>
+    <li>Malem does not use advertising SDKs, tracking pixels, or fingerprinting.</li>
+    <li>Malem does not sell personal information.</li>
+    <li>Malem does not read private Pinterest boards or require a Pinterest login.</li>
+    <li>Malem does not infer religion, ethnicity, health, or demographic attributes; profile controls are user-authored.</li>
   </ul>
 
   <h2>Optional integrations you can enable</h2>
 
-  <h3>OpenAI</h3>
-  <p>If you paste an OpenAI API key in Settings, your chat prompts are sent directly from your browser to <a href="https://api.openai.com" target="_blank" rel="noopener">api.openai.com</a> using that key. malem is not a proxy — the request bypasses us entirely. See <a href="https://openai.com/policies/privacy-policy" target="_blank" rel="noopener">OpenAI's privacy policy</a>.</p>
+  <h3>OpenRouter and model providers</h3>
+  <p>When live itinerary research is enabled, Malem sends the trip request and relevant profile constraints to the server-side OpenRouter workflow. OpenRouter routes the request to the models selected in Settings. The server owns the OpenRouter key; it is never exposed to the browser. Review <a href="https://openrouter.ai/privacy" target="_blank" rel="noopener">OpenRouter's privacy information</a> and the selected model provider's policy.</p>
 
-  <h3>Anthropic (Claude)</h3>
-  <p>If you paste an Anthropic API key, your chat prompts are sent directly from your browser to <a href="https://api.anthropic.com" target="_blank" rel="noopener">api.anthropic.com</a> using that key. See <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic's privacy policy</a>.</p>
+  <h3>Optional direct OpenAI or Anthropic connection</h3>
+  <p>If you enter your own OpenAI or Anthropic key, that key stays in this browser and requests are sent to that provider under its terms. Browser-stored keys can be read by JavaScript running on this origin, so use a limited, revocable key and remove it when no longer needed.</p>
 
   <h3>Pinterest inspiration</h3>
-  <p>The Outfit inspiration page fetches Pinterest's public search page for a query built from your trip context (destination, season, modesty preference, day vs. evening, plus any keywords you add in Settings). The request goes through a public CORS proxy — the exact same result you would see by typing that query into pinterest.com in your own browser. No Pinterest account, login, or board is involved, and no personal Pinterest data is read. Pin images shown on the page are hosted by Pinterest's own CDN (<code>i.pinimg.com</code>) and remain subject to <a href="https://policy.pinterest.com/en/privacy-policy" target="_blank" rel="noopener">Pinterest's privacy policy</a>. Any extra keywords you enter in Settings are stored only in this browser.</p>
+  <p>The Outfit inspiration page sends bounded public-image searches built from destination, season, itinerary setting, wardrobe presentation, modesty preference, and optional style keywords through Malem's same-origin search route. It requests full-outfit inspiration, not private Pinterest content. Images are normally loaded from their source host and may use Malem's allowlisted image proxy if direct loading fails. Source-host privacy policies still apply.</p>
 
   <h2>Community journal</h2>
-  <p>The community journal page displays a set of seeded example entries plus any journal entries you have marked as "Publish publicly" in this browser. Because malem has no backend, "publish publicly" only means that other accounts on <em>this same browser</em> can see the entry through the community view. Your entries do not leave your device unless you explicitly share them elsewhere.</p>
+  <p>Entries marked “Publish publicly” are returned by the public community endpoint with the entry text, author display name, destination, and selected accuracy notes. Private entries are never returned there. Turning publication off and saving the journal state removes the entry from future community responses.</p>
 
   <h2>Security</h2>
-  <p>malem's account and password system is a prototype and is not a secure authentication mechanism. Do not reuse a password you use anywhere else. The password hash stored locally is not cryptographic and is intended only to keep multiple accounts on the same browser separated.</p>
-  <p>API keys and OAuth tokens stored in <code>localStorage</code> can be read by any JavaScript that runs on this domain. Only paste keys you understand and can revoke.</p>
+  <p>Passwords are processed with PBKDF2-SHA256 and a unique random salt. Malem stores only the derived password hash. Sessions use random HttpOnly, SameSite cookies; only a SHA-256 hash of the session token is stored by the service. Production cookies are Secure and sessions expire after 30 days.</p>
+  <p>No internet service can promise perfect security. Use a unique password, keep sensitive health notes to the minimum needed for planning, and delete information you no longer want stored.</p>
 
   <h2>Children</h2>
-  <p>malem is not directed at children under 13. Trip planning features include fields for children's ages and family constraints so an adult traveler can plan for their family, but children should not create accounts.</p>
+  <p>Malem is not directed at children under 13. Trip planning features include fields for children's ages and family constraints so an adult traveler can plan for their family, but children should not create accounts.</p>
 
   <h2>Changes</h2>
   <p>If this policy changes, the updated date at the top of this page will change and the new version will be visible at this URL.</p>
 
   <h2>Contact</h2>
-  <p>malem is an open-source prototype maintained at <a href="https://github.com/kikhiamasahcollege-ai/malem" target="_blank" rel="noopener">github.com/kikhiamasahcollege-ai/malem</a>. Questions and issues can be filed there.</p>
+  <p>Malem is maintained at <a href="https://github.com/kikhiamasahcollege-ai/malem" target="_blank" rel="noopener">github.com/kikhiamasahcollege-ai/malem</a>. Questions and issues can be filed there.</p>
 </div>
 </body>
 </html>

@@ -1,5 +1,7 @@
--- malem — D1 schema for real accounts + sessions.
+-- malem Version 7 — D1 schema for accounts, sessions, and synced user state.
 -- Apply with:  wrangler d1 execute malem-db --file=./schema.sql
+
+PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
   id         TEXT PRIMARY KEY,          -- uuid
@@ -12,9 +14,19 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-  token      TEXT PRIMARY KEY,          -- random; stored in an httpOnly cookie
-  user_id    TEXT NOT NULL REFERENCES users(id),
+  token_hash TEXT PRIMARY KEY,          -- SHA-256 of the random cookie token
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at INTEGER NOT NULL           -- epoch ms
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS user_state (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  state_json TEXT NOT NULL,             -- validated Version 1 customer state
+  public_json TEXT NOT NULL DEFAULT '[]', -- bounded projection for community reads
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_state_updated ON user_state(updated_at);

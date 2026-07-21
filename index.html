@@ -6,9 +6,10 @@
 <title>malem — travel that understands you</title>
 <meta name="description" content="Tell malem where you're heading. It plans the trip — itinerary, outfits, packing, and cultural prep — shaped by who you are." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="./styles.css?v=20260715-4" />
+<link rel="stylesheet" href="./styles.css?v=20260719-7" />
 </head>
 <body>
+<div class="global-status" id="global-status" role="status" aria-live="polite"></div>
 
 <!-- 1. AUTH GATE -->
 <section class="gate" id="screen-auth" hidden>
@@ -32,7 +33,7 @@
       </label>
       <label class="field">
         <span>Password</span>
-        <input type="password" name="password" autocomplete="current-password" required minlength="4" placeholder="At least 4 characters" />
+        <input type="password" name="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="At least 8 characters" />
       </label>
     </div>
 
@@ -46,8 +47,7 @@
     </p>
 
     <p class="save-note" style="margin-top:2rem;">
-      Prototype accounts live in this browser only.
-      <a href="#" id="try-demo-account">Try the demo account</a>.
+      Your account and trips sync securely anywhere you sign in.
     </p>
     <p class="save-note" style="margin-top:.75rem;">
       Or <a href="#/community" id="auth-goto-community">browse the community journal</a> — no sign in needed.
@@ -113,6 +113,9 @@
 <!-- 2. APP SHELL — sidebar + chat OR trip dashboard -->
 <div id="screen-app" class="dash" hidden>
   <button class="side-toggle" id="side-toggle" aria-label="Toggle navigation">Menu</button>
+  <button class="sidebar-collapse" id="sidebar-collapse" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">
+    <span aria-hidden="true">‹</span>
+  </button>
 
   <aside class="sidebar">
     <div class="brand">
@@ -175,7 +178,7 @@
         <textarea id="chat-textarea" rows="1" placeholder="Where are you heading? Say as much or as little as you like…"></textarea>
         <button type="submit" class="chat-send" aria-label="Send">↑</button>
       </form>
-      <p class="chat-hint" id="chat-hint">Powered by a local parser. <a href="#" id="chat-settings-link">Add your OpenAI key</a> to switch to GPT.</p>
+      <p class="chat-hint" id="chat-hint">Powered by a local parser. <a href="#" id="chat-settings-link">Connect the server-side OpenRouter workflow</a> to generate live plans and outfits.</p>
     </section>
 
     <!-- ITINERARY -->
@@ -217,7 +220,7 @@
       <div class="page-head">
         <span class="eyebrow">Outfit inspiration</span>
         <h1>What to wear.</h1>
-        <p class="kicker" id="outfits-kicker">A Pinterest-style feed ranked by your trip, visual taste, and the outfits you save, open, zoom, or hide.</p>
+        <p class="kicker" id="outfits-kicker">Several complete outfit references for each style direction, tuned to the weather, itinerary, and feel of the place.</p>
       </div>
       <div id="outfits-output"></div>
       <p class="image-source" id="outfits-source">Building your personalized outfit index…</p>
@@ -251,8 +254,8 @@
               <option value="backpack">Backpack</option>
             </select>
           </label>
-          <label class="field"><label class="inline-check"><input type="checkbox" name="laundry" checked /> <span>Laundry on trip</span></label></label>
-          <label class="field"><label class="inline-check"><input type="checkbox" name="rentThere" /> <span>OK to buy/rent locally</span></label></label>
+          <label class="field inline-check"><input type="checkbox" name="laundry" checked /> <span>Laundry on trip</span></label>
+          <label class="field inline-check"><input type="checkbox" name="rentThere" /> <span>OK to buy/rent locally</span></label>
         </div>
         <div>
           <span class="eyebrow" style="display:block;margin-bottom:.5rem;">Activities</span>
@@ -345,7 +348,11 @@
         <p class="kicker">Icons, favourites, small businesses, hidden gems, and seasonal moments.</p>
       </div>
 
-      <button type="button" class="btn ghost" id="toggle-local-controls" style="margin-bottom:1rem;">Adjust</button>
+      <div class="conn-actions" style="margin-bottom:1rem;">
+        <button type="button" class="btn ghost" id="toggle-local-controls">Adjust</button>
+        <button type="button" class="btn ghost" id="clear-local-place-feedback">Clear saved review feedback</button>
+        <span class="save-note" id="local-place-feedback-note" aria-live="polite"></span>
+      </div>
       <form id="local-form" class="pack-controls stack" hidden>
         <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
           <label class="field">
@@ -479,7 +486,7 @@
               </select>
             </label>
           </div>
-          <label class="field"><label class="inline-check"><input type="checkbox" name="publicEntry" /> <span>Publish publicly (opt-in only)</span></label></label>
+          <label class="field inline-check"><input type="checkbox" name="publicEntry" /> <span>Publish publicly (opt-in only)</span></label>
           <div>
             <button type="button" class="btn primary" id="add-journal">Add entry</button>
             <span class="save-note" id="journal-note" aria-live="polite"></span>
@@ -541,6 +548,27 @@
             <option value="packed">Packed</option>
           </select>
         </label>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>Outfit direction</legend>
+        <label class="field">
+          <span>Wardrobe presentation</span>
+          <select name="wardrobePresentation">
+            <option value="women" selected>Women’s wardrobe</option>
+            <option value="men">Men’s wardrobe</option>
+            <option value="unisex">Unisex / gender-neutral wardrobe</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Style age range</span>
+          <select name="styleAgeBand">
+            <option value="teen">Teen</option>
+            <option value="adult" selected>Adult</option>
+            <option value="mature">Mature adult</option>
+          </select>
+        </label>
+        <p class="hint">This is used only for outfit planning and image search. It is never guessed from your name or other profile details.</p>
       </fieldset>
 
       <fieldset class="fieldset">
@@ -616,9 +644,7 @@
           <span>Children's ages (comma-separated)</span>
           <input type="text" name="childrenAges" placeholder="4, 8" />
         </label>
-        <label class="field">
-          <label class="inline-check"><input type="checkbox" name="babyOnBoard" /> <span>Traveling with a baby</span></label>
-        </label>
+        <label class="field inline-check"><input type="checkbox" name="babyOnBoard" /> <span>Traveling with a baby</span></label>
         <label class="field">
           <span>Family notes</span>
           <input type="text" name="familyNotes" placeholder="nap schedule, dietary variations…" />
@@ -653,7 +679,7 @@
       </div>
       <button type="button" class="close-x" data-close-sheet aria-label="Close">Close</button>
     </div>
-    <p class="hint">Everything is stored in this browser only. Keys and tokens never leave your device except to talk directly to each provider.</p>
+    <p class="hint">The OpenRouter secret stays on the local server. Other optional provider keys are stored in this browser and only sent to their provider.</p>
 
     <form id="settings-form" class="stack" style="margin-top:1.25rem;">
 
@@ -664,16 +690,90 @@
           <span>OpenRouter</span>
           <span class="conn-status" id="conn-status-openrouter">Not connected</span>
         </legend>
-        <p class="hint">Routes to any model and runs live web search for current places, reviews, hours, and closures.</p>
-        <label class="field">
-          <span>API key</span>
-          <input type="password" name="openrouterKey" placeholder="sk-or-…" autocomplete="off" />
-        </label>
+        <p class="hint">Routes to any model and runs live web search for current places, reviews, hours, and closures. The key is read from <code>OPENROUTER_API_KEY</code> by <code>server.mjs</code>, never from this form.</p>
         <label class="field">
           <span>Model</span>
-          <input type="text" name="openrouterModel" placeholder="openrouter/auto" autocomplete="off" />
+          <input type="text" name="openrouterModel" placeholder="openai/gpt-5.6-luna" autocomplete="off" />
         </label>
-        <p class="hint" style="margin-top:.35rem;">Any OpenRouter model id. Web search is added automatically when building a plan.</p>
+        <p class="hint" style="margin-top:.35rem;">Any OpenRouter model id for parsing the chat request. The four-stage itinerary pipeline is configured below.</p>
+      </fieldset>
+
+      <fieldset class="conn-tile" data-conn="itinerary-pipeline" data-connected="true">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">Ⅳ</span>
+          <span>Itinerary LLM pipeline</span>
+          <span class="conn-status" id="pipeline-model-count">4 calls per itinerary</span>
+        </legend>
+        <p class="hint">Each stage is isolated. Discovery and reviews use bounded live web search; selection and presentation only use the structured evidence from earlier stages.</p>
+        <label class="field">
+          <span>1. Discover current places</span>
+          <select name="pipelineDiscover">
+            <option value="google/gemini-3-flash-preview">Gemini 3 Flash — strongest tool use and research value</option>
+            <option value="google/gemini-3.5-flash">Gemini 3.5 Flash — newer, higher-cost option</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>2. Verify review evidence</span>
+          <select name="pipelineReviews">
+            <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite — fast structured extraction</option>
+            <option value="google/gemini-3-flash-preview">Gemini 3 Flash — deeper review synthesis</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>3. Choose for the traveler’s vibe</span>
+          <select name="pipelineSelect">
+            <option value="openai/gpt-5.6-terra">GPT-5.6 Terra — strong constraint reasoning</option>
+            <option value="google/gemini-3.5-flash">Gemini 3.5 Flash — faster fallback</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>4. Build the itinerary presentation</span>
+          <select name="pipelinePresent">
+            <option value="google/gemini-3.5-flash">Gemini 3.5 Flash — high-quality long JSON composition</option>
+            <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite — lower-cost fallback</option>
+          </select>
+        </label>
+        <div class="hint" id="pipeline-usage" aria-live="polite" style="margin-top:.6rem;"></div>
+        <details id="pipeline-trace" style="margin-top:.8rem;">
+          <summary>Latest pipeline process and model responses</summary>
+          <div id="pipeline-trace-output" class="hint" style="margin-top:.6rem;"></div>
+        </details>
+        <p class="hint">Costs are recorded per completed OpenRouter call. The API-reported cost is shown when available; otherwise Malem shows a token-and-search estimate. Web searches are capped at 15 results per research stage.</p>
+      </fieldset>
+
+      <fieldset class="conn-tile" data-conn="outfit-pipeline" data-connected="true">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">◈</span>
+          <span>Live outfit vision-board workflow</span>
+          <span class="conn-status">Plan → retrieve → visually curate</span>
+        </legend>
+        <p class="hint">The planner receives the original request, saved profile, live weather, and itinerary as one immutable context. It searches for real fashion pieces, then a separate vision model selects and audits model-free cutouts for each daily editorial board. No images are AI-generated.</p>
+        <label class="field">
+          <span>1. Build each day’s capsule direction</span>
+          <select name="outfitPlanModel">
+            <option value="google/gemini-3.5-flash">Gemini 3.5 Flash — wardrobe reasoning</option>
+            <option value="google/gemini-3-flash-preview">Gemini 3 Flash — lower-cost fallback</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>2. Visually curate real web-sourced pieces</span>
+          <select name="outfitCurateModel">
+            <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite — fast multimodal curator</option>
+            <option value="google/gemini-3-flash-preview">Gemini 3 Flash — deeper visual curator</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset class="conn-tile" data-conn="place-feedback" data-connected="true">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">×</span>
+          <span>Saved place review feedback</span>
+        </legend>
+        <p class="hint">Delete locally saved ratings, review counts, summaries, and review links from every trip. It preserves trips, places, official source links, profile preferences, and the cost ledger.</p>
+        <div class="conn-actions">
+          <button type="button" class="btn ghost" id="clear-place-feedback">Clear saved place feedback</button>
+          <span class="save-note" id="place-feedback-note" aria-live="polite"></span>
+        </div>
       </fieldset>
 
       <!-- Connection: OpenAI -->
@@ -761,7 +861,7 @@
           <span class="conn-status" id="conn-status-pinterest">Active</span>
         </legend>
         <p class="hint">
-          The outfit feed combines several Pinterest searches built from your destination, season, activities, wardrobe brief, modesty preferences, and day vs. evening context.
+          The outfit feed uses up to two cached full-look searches per style direction, built from your country, city, season, activities, vibe, wardrobe presentation, and modesty preferences.
           Results are de-duplicated and ranked in this browser using text relevance, visual similarity, and your Save/Open/Zoom/Hide history. No Pinterest login is needed.
         </p>
 
@@ -776,6 +876,18 @@
         </div>
       </fieldset>
 
+      <fieldset class="conn-tile account-danger">
+        <legend class="conn-legend">
+          <span class="conn-mark" aria-hidden="true">×</span>
+          <span>Account data</span>
+        </legend>
+        <p class="hint">Permanently delete your account, synchronized trips, profile, group, and journal. This cannot be undone.</p>
+        <div class="conn-actions">
+          <button type="button" class="btn ghost" id="delete-account">Delete account</button>
+          <span class="save-note" id="delete-account-note" aria-live="polite"></span>
+        </div>
+      </fieldset>
+
       <div class="sheet-actions">
         <button type="button" class="btn primary" id="save-settings">Save</button>
         <span class="save-note" id="settings-note" aria-live="polite"></span>
@@ -784,6 +896,6 @@
   </div>
 </aside>
 
-<script src="./app.js?v=20260715-4"></script>
+<script src="./app.js?v=20260719-7"></script>
 </body>
 </html>

@@ -92,13 +92,22 @@ type ItineraryBlock = {
 };
 ```
 
-## Storage
+## Version 7 synchronized state
 
-Phase 1 (website): `localStorage` under `malem.profile.v1` and
-`malem.itinerary.last.v1`.
+The authenticated `GET/PUT /api/state` payload is:
 
-Phase 2 (accounts): identical objects sent to a `/profile` and `/itineraries`
-REST or GraphQL endpoint. Client code stays the same; swap the `store` module.
+```ts
+type UserStateV1 = {
+  version: 1;
+  profile: TravelProfile | null;
+  trips: Trip[];               // capped at 100
+  activeTrip: string | null;
+  group: GroupMember[];        // capped at 50
+  journal: JournalEntry[];     // capped at 500
+};
+```
 
-Phase 3 (mobile app): same object shapes. Only the store implementation
-changes to AsyncStorage / secure enclave / server API.
+The browser keeps the same objects in `localStorage` as a fast cache, but the
+server account is authoritative after login. Theme, model choices, optional
+provider keys, usage traces, and local outfit-ranking signals remain
+device-specific and are never included in `UserStateV1`.

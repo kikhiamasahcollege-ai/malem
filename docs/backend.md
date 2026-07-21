@@ -1,10 +1,18 @@
 # malem — real accounts on Cloudflare (Pages Functions + D1)
 
-This moves auth off browser `localStorage` and onto a real backend:
-- **D1** (SQLite) stores users + sessions — see [`../schema.sql`](../schema.sql).
+Version 7 uses the same API contract in local development and production:
+- **D1** (SQLite) stores users, hashed sessions, and synchronized state — see
+  [`../schema.sql`](../schema.sql).
 - **Pages Functions** serve the API at `/api/*` — see [`../functions/api/[[route]].js`](../functions/api/%5B%5Broute%5D%5D.js).
 - Passwords are hashed with **PBKDF2-SHA256** (per-user salt).
-- Sessions are random tokens in an **httpOnly, Secure** cookie — the browser never holds a password hash again.
+- Session cookies are random, **HttpOnly**, **Secure**, and SameSite; only a
+  SHA-256 token hash is stored in D1.
+- `GET/PUT /api/state` synchronizes profile, trips, active trip, group, and
+  journal. Requests are authenticated, shape-validated, and capped at 2 MiB.
+- `GET /api/community` returns only journal entries explicitly marked public.
+  D1 stores a small public projection beside the private state, so community
+  reads never scan full trip bundles; responses are edge-cached for five minutes
+  and invalidated on publication or account deletion.
 
 ## One-time setup
 
@@ -19,37 +27,36 @@ wrangler d1 create malem-db
 wrangler d1 execute malem-db --local  --file=./schema.sql
 wrangler d1 execute malem-db --remote --file=./schema.sql
 
-# 3. Run everything locally (static site + /api together, one origin)
-wrangler pages dev
-#    -> open the printed http://localhost:8788
+# 3. Run everything locally (static site + matching local account API)
+node server.mjs
+#    -> http://localhost:8000
+#
+# Or validate the D1 Pages runtime itself:
+npx wrangler pages dev . --d1 DB=malem-db
 
 # 4. Ship it
 wrangler pages deploy
 ```
 
-Local dev note: use `wrangler pages dev` (serves the API too), **not** `python3 -m http.server` — the latter serves only the static files and `/api/*` will 404.
+Do not use `python3 -m http.server`: it has no identity, state, or upstream API
+routes. `server.mjs` persists development accounts in
+`.malem-data/accounts.json` by default; that ignored file must never be
+committed. Set `MALEM_DATA_FILE` to isolate automated or manual test data.
 
-## Frontend swap (do this once the API is deployed)
+## API contract
 
-Replace the `localStorage`-backed `auth` module in `app.js` with these fetch calls. The UI already
-routes through `auth.*`, so the main ripple is that **`current()` becomes async** — add `await` at its
-few call sites in the `ui` module.
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/signup` | Create an account and session |
+| `POST` | `/api/login` | Verify credentials and create a session |
+| `POST` | `/api/logout` | Invalidate the current server session |
+| `DELETE` | `/api/account` | Delete the user, sessions, and synchronized state |
+| `GET` | `/api/me` | Restore the signed-in user during app boot |
+| `GET` | `/api/state` | Hydrate synchronized customer state |
+| `PUT` | `/api/state` | Replace validated Version 1 customer state |
+| `GET` | `/api/community` | Read explicitly published journal entries |
+| `GET` | `/api/health` | Confirm that identity storage is configured |
 
-```js
-// ---------- auth (backend-backed) ----------
-const auth = (() => {
-  const api = (path, body) => fetch('/api/' + path, {
-    method: 'POST', credentials: 'include',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  }).then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'Request failed.'); return d; });
-
-  const signup  = (name, email, password) => api('signup', { name, email, password });
-  const signin  = (email, password)       => api('login',  { email, password });
-  const signout = ()                       => api('logout');
-  const current = ()                       => fetch('/api/me', { credentials: 'include' }).then(r => r.ok ? r.json() : null);
-  return { signup, signin, signout, current };
-})();
-```
-
-The `useDemo()` seeding still works client-side, or can be reworked to seed via the API later.
+The frontend checks `/api/me` before routing, retains the current public user in
+memory, hydrates state after signup/login/reload, and debounces state writes.
+Device-only settings and provider secrets are outside this payload.

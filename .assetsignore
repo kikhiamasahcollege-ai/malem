@@ -1,4 +1,15 @@
 # Files that must NOT be served as public static assets by Cloudflare Pages.
+.env
+.env.*
+.git/
+.malem-data/
+.vscode/
+.idea/
 wrangler.toml
 schema.sql
+server.mjs
+lib/
+tests/
+docs/
 .assetsignore
+README.md

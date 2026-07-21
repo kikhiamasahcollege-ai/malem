@@ -121,15 +121,14 @@ can publish:
 
 ---
 
-## Roadmap
+## Delivery status
 
-**Phase 1 — Website (this scaffold):** Personal profile + Vibe itinerary
-chooser, localStorage persistence, no backend. Focus of the current branch
-`claude/travel-profile-itinerary-7a08ju`.
+**Version 7 web app:** Profile, free-form trip creation, live or degraded
+itinerary, full-outfit inspiration, packing, What to Expect, Discover Now,
+local discovery, group voting, journals, real server accounts, synchronized
+state, and public opt-in community entries are implemented. Cloudflare Pages
+Functions and D1 provide the deployed backend.
 
-**Phase 2 — Website expansion:** Discover Now stub, Packing planner, What to
-Expect, real accounts (Supabase or similar), destination data ingestion.
-
-**Phase 3 — Mobile app:** Port to React Native / Expo. The web UI is written
+**Future mobile app:** Port to React Native / Expo. The web UI is written
 without framework lock-in specifically to make this port straightforward. The
 data model in `docs/data-model.md` is the contract shared between platforms.

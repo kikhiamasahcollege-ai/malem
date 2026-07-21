@@ -3,8 +3,8 @@
 // ---------- store ----------
 const store = (() => {
   const K = {
-    session: 'malem.session.v1',
-    accounts: 'malem.accounts.v1',
+    legacySession: 'malem.session.v1',
+    legacyAccounts: 'malem.accounts.v1',
     profile:  (e) => `malem.profile.v1.${e}`,
     trips:    (e) => `malem.trips.v2.${e}`,          // NEW: array of trips
     activeTrip: (e) => `malem.activeTrip.v1.${e}`,   // NEW: id of active trip
@@ -15,11 +15,40 @@ const store = (() => {
     openaiKey:    'malem.openaiKey.v1',
     openaiModel:  'malem.openaiModel.v1',
   };
+  // These are deliberately separate calls, so research, review-reading,
+  // selection, and presentation can be tuned and metered independently.
+  const DEFAULT_OPENROUTER_PIPELINE = Object.freeze({
+    discover: 'google/gemini-3-flash-preview',
+    reviews: 'google/gemini-3.1-flash-lite',
+    select: 'openai/gpt-5.6-terra',
+    present: 'google/gemini-3.5-flash',
+  });
+  const DEFAULT_OUTFIT_PIPELINE = Object.freeze({
+    plan: 'google/gemini-3.5-flash',
+    curate: 'google/gemini-3.1-flash-lite',
+  });
   const readJSON = (k, f) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? f; } catch { return f; } };
+  let activeEmail = '';
+  let syncHandler = null;
+  let suppressSync = false;
+  const notifySync = (email) => {
+    if (!suppressSync && syncHandler && email && email === activeEmail) syncHandler(email);
+  };
+  // The OpenRouter integration moved to the server proxy. Remove the old
+  // browser-stored value without reading it, so a legacy secret is not retained.
+  localStorage.removeItem('malem.openrouterKey.v1');
+  // Version 7 moved identity to HttpOnly server sessions. Delete obsolete
+  // browser-side account hashes and sessions without reading or migrating them.
+  localStorage.removeItem(K.legacySession);
+  localStorage.removeItem(K.legacyAccounts);
 
   const emptyProfile = () => ({
     version: 1,
     vibes: [], budget: 'mid', pace: 'balanced',
+    // Keep existing profiles on the women's setting that was used in the
+    // product brief; this is explicit, editable preference—not inference.
+    wardrobePresentation: 'women',
+    styleAgeBand: 'adult',
     dietary: { halal: false, kosher: false, vegan: false, vegetarian: false, glutenFree: false, allergies: [], other: '' },
     accessibility: { stepFree: false, lowVision: false, lowHearing: false, seatingBreaks: false, notes: '' },
     religiousCultural: '',
@@ -33,11 +62,14 @@ const store = (() => {
 
   const trips = {
     load: (e) => readJSON(K.trips(e), []),
-    save: (e, arr) => localStorage.setItem(K.trips(e), JSON.stringify(arr)),
+    save: (e, arr) => {
+      localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      notifySync(e);
+    },
     add:  (e, trip) => {
       const arr = readJSON(K.trips(e), []);
       const t = { id: trip.id || nextId(), createdAt: trip.createdAt || Date.now(), ...trip };
-      arr.push(t); localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      arr.push(t); localStorage.setItem(K.trips(e), JSON.stringify(arr)); notifySync(e);
       return t;
     },
     update: (e, id, patch) => {
@@ -45,18 +77,53 @@ const store = (() => {
       const index = arr.findIndex(t => t.id === id);
       if (index < 0) return null;
       arr[index] = { ...arr[index], ...patch, updatedAt: Date.now() };
-      localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      localStorage.setItem(K.trips(e), JSON.stringify(arr)); notifySync(e);
       return arr[index];
     },
     remove: (e, id) => {
       const arr = readJSON(K.trips(e), []).filter(t => t.id !== id);
-      localStorage.setItem(K.trips(e), JSON.stringify(arr));
+      localStorage.setItem(K.trips(e), JSON.stringify(arr)); notifySync(e);
+    },
+    // Review evidence is generated per place and saved with a trip so it can
+    // be shown offline. This deliberately removes only review-derived fields,
+    // preserving the trip, itinerary structure, and first-party source links.
+    clearPlaceReviewFeedback: () => {
+      const reviewFields = ['rating', 'reviewCount', 'reviewSummary', 'reviewSourceUrl'];
+      let removed = 0;
+      const scrubPlace = (place) => {
+        const copy = { ...place };
+        reviewFields.forEach(field => {
+          if (Object.hasOwn(copy, field)) { delete copy[field]; removed++; }
+        });
+        return copy;
+      };
+      (activeEmail ? [activeEmail] : []).forEach(email => {
+        const current = readJSON(K.trips(email), []);
+        const cleaned = current.map(trip => {
+          if (!trip.bundle) return trip;
+          const bundle = { ...trip.bundle };
+          if (Array.isArray(bundle.local)) bundle.local = bundle.local.map(scrubPlace);
+          if (Array.isArray(bundle.itinerary?.days)) {
+            bundle.itinerary = {
+              ...bundle.itinerary,
+              days: bundle.itinerary.days.map(day => ({
+                ...day,
+                ...(Array.isArray(day.blocks) ? { blocks: day.blocks.map(scrubPlace) } : {}),
+              })),
+            };
+          }
+          return { ...trip, bundle };
+        });
+        localStorage.setItem(K.trips(email), JSON.stringify(cleaned));
+        notifySync(email);
+      });
+      return removed;
     },
   };
   const activeTrip = {
     get: (e) => readJSON(K.activeTrip(e), null),
-    set: (e, id) => localStorage.setItem(K.activeTrip(e), JSON.stringify(id)),
-    clear: (e) => localStorage.removeItem(K.activeTrip(e)),
+    set: (e, id) => { localStorage.setItem(K.activeTrip(e), JSON.stringify(id)); notifySync(e); },
+    clear: (e) => { localStorage.removeItem(K.activeTrip(e)); notifySync(e); },
   };
   // Migrate legacy single-trip storage into the trips array on first access.
   const migrate = (email) => {
@@ -70,20 +137,93 @@ const store = (() => {
       localStorage.setItem(K.activeTrip(email), JSON.stringify(t.id));
     }
     localStorage.removeItem(K.legacyTrip(email));
+    notifySync(email);
+  };
+
+  const emptyState = () => ({
+    version: 1,
+    profile: null,
+    trips: [],
+    activeTrip: null,
+    group: [],
+    journal: [],
+  });
+  const syncableTrips = (email) => readJSON(K.trips(email), []).map((trip) => {
+    // Pipeline traces can be very large and are diagnostic/device-local. The
+    // completed plan and its source evidence remain synchronized.
+    const { llmRun: _deviceOnlyTrace, ...syncable } = trip;
+    return syncable;
+  });
+  const stateSnapshot = (email) => ({
+    version: 1,
+    profile: readJSON(K.profile(email), null),
+    trips: syncableTrips(email),
+    activeTrip: readJSON(K.activeTrip(email), null),
+    group: readJSON(K.group(email), []),
+    journal: readJSON(K.journal(email), []),
+  });
+  const hasLocalState = (email) => {
+    const state = stateSnapshot(email);
+    return Boolean(state.profile || state.trips.length || state.group.length || state.journal.length);
+  };
+  const hydrateState = (email, value) => {
+    const state = { ...emptyState(), ...(value || {}) };
+    const localTrips = new Map(readJSON(K.trips(email), []).map((trip) => [trip.id, trip]));
+    const hydratedTrips = (Array.isArray(state.trips) ? state.trips : []).map((trip) => {
+      const localTrace = localTrips.get(trip.id)?.llmRun;
+      return localTrace ? { ...trip, llmRun: localTrace } : trip;
+    });
+    suppressSync = true;
+    try {
+      if (state.profile) localStorage.setItem(K.profile(email), JSON.stringify(state.profile));
+      else localStorage.removeItem(K.profile(email));
+      localStorage.setItem(K.trips(email), JSON.stringify(hydratedTrips));
+      if (state.activeTrip) localStorage.setItem(K.activeTrip(email), JSON.stringify(state.activeTrip));
+      else localStorage.removeItem(K.activeTrip(email));
+      localStorage.setItem(K.group(email), JSON.stringify(Array.isArray(state.group) ? state.group : []));
+      localStorage.setItem(K.journal(email), JSON.stringify(Array.isArray(state.journal) ? state.journal : []));
+    } finally {
+      suppressSync = false;
+    }
+  };
+  const clearUserState = (email) => {
+    suppressSync = true;
+    try {
+      [K.profile(email), K.trips(email), K.activeTrip(email), K.legacyTrip(email), K.group(email), K.journal(email)]
+        .forEach((key) => localStorage.removeItem(key));
+    } finally {
+      suppressSync = false;
+    }
   };
 
   return {
     emptyProfile,
-    session: { get: () => readJSON(K.session, null), set: (s) => localStorage.setItem(K.session, JSON.stringify(s)), clear: () => localStorage.removeItem(K.session) },
-    accounts: { all: () => readJSON(K.accounts, {}), save: (m) => localStorage.setItem(K.accounts, JSON.stringify(m)) },
     profile: {
       load: (e) => ({ ...emptyProfile(), ...(readJSON(K.profile(e), {}) || {}) }),
-      save: (e, v) => localStorage.setItem(K.profile(e), JSON.stringify(v)),
-      clear: (e) => localStorage.removeItem(K.profile(e)),
+      save: (e, v) => { localStorage.setItem(K.profile(e), JSON.stringify(v)); notifySync(e); },
+      clear: (e) => { localStorage.removeItem(K.profile(e)); notifySync(e); },
     },
     trips, activeTrip, migrate,
-    group:  { load: (e) => readJSON(K.group(e), []),   save: (e, g) => localStorage.setItem(K.group(e), JSON.stringify(g)),  clear: (e) => localStorage.removeItem(K.group(e)) },
-    journal:{ load: (e) => readJSON(K.journal(e), []), save: (e, j) => localStorage.setItem(K.journal(e), JSON.stringify(j)), clear: (e) => localStorage.removeItem(K.journal(e)) },
+    group:  {
+      load: (e) => readJSON(K.group(e), []),
+      save: (e, g) => { localStorage.setItem(K.group(e), JSON.stringify(g)); notifySync(e); },
+      clear: (e) => { localStorage.removeItem(K.group(e)); notifySync(e); },
+    },
+    journal:{
+      load: (e) => readJSON(K.journal(e), []),
+      save: (e, j) => { localStorage.setItem(K.journal(e), JSON.stringify(j)); notifySync(e); },
+      clear: (e) => { localStorage.removeItem(K.journal(e)); notifySync(e); },
+    },
+    cloud: {
+      connect: (email) => { activeEmail = email || ''; },
+      disconnect: () => { activeEmail = ''; },
+      setSyncHandler: (handler) => { syncHandler = handler; },
+      snapshot: stateSnapshot,
+      hydrate: hydrateState,
+      clear: clearUserState,
+      hasLocalState,
+      empty: emptyState,
+    },
     theme:  { get: () => localStorage.getItem(K.theme) || '', set: (t) => t ? localStorage.setItem(K.theme, t) : localStorage.removeItem(K.theme) },
     ai: {
       openaiKey:    { get: () => localStorage.getItem(K.openaiKey) || '',
@@ -102,13 +242,33 @@ const store = (() => {
                       set: (m) => m ? localStorage.setItem('malem.anthropicModel.v1', m) : localStorage.removeItem('malem.anthropicModel.v1') },
       provider:     { get: () => localStorage.getItem('malem.aiProvider.v1') || 'auto',
                       set: (p) => p ? localStorage.setItem('malem.aiProvider.v1', p) : localStorage.removeItem('malem.aiProvider.v1') },
-      openrouterKey:   { get: () => localStorage.getItem('malem.openrouterKey.v1') || '',
-                         set: (k) => k ? localStorage.setItem('malem.openrouterKey.v1', k) : localStorage.removeItem('malem.openrouterKey.v1') },
       openrouterModel: { get: () => {
                            const saved = localStorage.getItem('malem.openrouterModel.v1') || '';
-                           return saved === 'google/gemini-3.5-flash' ? 'openrouter/auto' : (saved || 'openrouter/auto');
+                           return saved || 'openai/gpt-5.6-luna';
                          },
                          set: (m) => m ? localStorage.setItem('malem.openrouterModel.v1', m) : localStorage.removeItem('malem.openrouterModel.v1') },
+      pipeline: {
+        get: () => ({ ...DEFAULT_OPENROUTER_PIPELINE, ...(readJSON('malem.openrouterPipeline.v1', {}) || {}) }),
+        set: (pipeline) => localStorage.setItem('malem.openrouterPipeline.v1', JSON.stringify({ ...DEFAULT_OPENROUTER_PIPELINE, ...pipeline })),
+      },
+      outfitPipeline: {
+        get: () => ({ ...DEFAULT_OUTFIT_PIPELINE, ...(readJSON('malem.openrouterOutfitPipeline.v1', {}) || {}) }),
+        set: (pipeline) => localStorage.setItem('malem.openrouterOutfitPipeline.v1', JSON.stringify({ ...DEFAULT_OUTFIT_PIPELINE, ...pipeline })),
+      },
+      usage: {
+        all: () => readJSON('malem.openrouterUsage.v1', []),
+        add: (entry) => {
+          const entries = readJSON('malem.openrouterUsage.v1', []);
+          entries.unshift(entry);
+          localStorage.setItem('malem.openrouterUsage.v1', JSON.stringify(entries.slice(0, 100)));
+        },
+        clear: () => localStorage.removeItem('malem.openrouterUsage.v1'),
+      },
+      lastRun: {
+        get: () => readJSON('malem.openrouterLastRun.v1', null),
+        set: (run) => localStorage.setItem('malem.openrouterLastRun.v1', JSON.stringify(run)),
+        clear: () => localStorage.removeItem('malem.openrouterLastRun.v1'),
+      },
       // Back-compat for older callers:
       getKey:   () => localStorage.getItem(K.openaiKey) || '',
       setKey:   (k) => k ? localStorage.setItem(K.openaiKey, k) : localStorage.removeItem(K.openaiKey),
@@ -319,6 +479,10 @@ const parser = (() => {
   // such as "with my parents" do not become part of the place name.
   const genericDestination = (text) => {
     const raw = String(text || '').trim();
+    const nonDestinations = new Set([
+      'january','february','march','april','may','june','july','august','september','october','november','december',
+      'spring','summer','autumn','fall','winter','the morning','the afternoon','the evening',
+    ]);
     const stop = '(?=\\s+(?:for|with|from|on|next|this|during|because|and\\s+(?:i|we|my|our))\\b|[,;.!?]|$)';
     const patterns = [
       new RegExp('\\b(?:go(?:ing)?|travel(?:l)?ing|head(?:ing)?|fly(?:ing)?|visit(?:ing)?|vacation(?:ing)?)\\s+(?:to|in)\\s+([a-z][a-z .\\\'-]{1,48}?)' + stop, 'i'),
@@ -327,7 +491,8 @@ const parser = (() => {
     ];
     for (const pattern of patterns) {
       const match = raw.match(pattern);
-      if (match && slugifyPlace(match[1])) return match[1].trim();
+      const candidate = match?.[1]?.trim();
+      if (candidate && !nonDestinations.has(candidate.toLowerCase()) && slugifyPlace(candidate)) return candidate;
     }
     // A short reply such as "Barcelona" or "Mexico City" is a destination.
     if (/^[a-z][a-z .'-]{1,48}$/i.test(raw) && raw.trim().split(/\s+/).length <= 4
@@ -421,9 +586,23 @@ const parser = (() => {
 
     // Accessibility
     if (/\bwheelchair\b|\bstep[\s-]?free\b|\baccessib/.test(t)) { prefs.accessibility.stepFree = true; inferred.push('step-free'); }
+    if (/\bno stairs?\b|\bavoid stairs?\b|\bno steep hills?\b|\bavoid (?:steep )?hills?\b/.test(t)) {
+      prefs.accessibility.stepFree = true;
+      inferred.push('step-free');
+    }
     if (/\bcane\b|\bcanes\b|\bwalker\b/.test(t))                  { prefs.accessibility.seatingBreaks = true; inferred.push('frequent seating'); }
     if (/\blow vision\b|\bblind\b|\bvisually\s+impaired\b/.test(t)) { prefs.accessibility.lowVision = true; inferred.push('low-vision'); }
     if (/\bdeaf\b|\bhearing\s+impaired\b|\blow hearing\b/.test(t)) { prefs.accessibility.lowHearing = true; inferred.push('low-hearing'); }
+
+    const explicitAvoids = [
+      [/\b(?:no|avoid)\s+(?:steep\s+)?hills?\b/, 'steep hills'],
+      [/\b(?:no|avoid)\s+stairs?\b/, 'stairs'],
+      [/\b(?:no|avoid)\s+(?:large\s+)?crowds?\b/, 'crowds'],
+      [/\bno early (?:starts?|mornings?)\b|\bavoid early (?:starts?|mornings?)\b/, 'early starts'],
+      [/\b(?:no|avoid)\s+nightlife\b/, 'nightlife'],
+      [/\b(?:no|avoid)\s+alcohol\b|\balcohol[\s-]?free\b/, 'alcohol'],
+    ];
+    explicitAvoids.forEach(([pattern, label]) => { if (pattern.test(t)) prefs.avoid.push(label); });
 
     // Modesty
     if (/\bmodest\b/.test(t))         { prefs.modesty = 'modest';       inferred.push('modest'); }
@@ -436,8 +615,8 @@ const parser = (() => {
     // Budget
     if (/\bluxury\b|\b5[\s-]?star\b|\bhigh[\s-]?end\b/.test(t))        prefs.budget = 'luxury';
     else if (/\bcomfort\b|\bnice hotel\b/.test(t))                     prefs.budget = 'comfort';
-    else if (/\bshoestring\b|\bbudget\b|\bbackpack/.test(t))           prefs.budget = 'shoestring';
     else if (/\bmedium\b|\bmid[\s-]?range\b|\bmiddle\b/.test(t))       prefs.budget = 'mid';
+    else if (/\bshoestring\b|\bon a budget\b|\bbudget trip\b|\bbackpack/.test(t)) prefs.budget = 'shoestring';
 
     // Pace
     if (/\bslow\b|\bgentle\b|\brelax/.test(t))              prefs.pace = 'slow';
@@ -489,6 +668,7 @@ const parser = (() => {
     }
     if (prefs.budget) p.budget = prefs.budget;
     if (prefs.pace)   p.pace   = prefs.pace;
+    if (prefs.avoid?.length) p.avoid = Array.from(new Set([...(existing.avoid || []), ...prefs.avoid]));
     return p;
   };
 
@@ -499,7 +679,20 @@ const parser = (() => {
 const ai = (() => {
   const hasOpenAI = () => !!store.ai.openaiKey.get();
   const hasClaude = () => !!store.ai.claudeKey.get();
-  const hasOpenRouter = () => !!store.ai.openrouterKey.get();
+  // OpenRouter credentials are intentionally server-side. This flag is
+  // populated from the local proxy's status endpoint and never contains a key.
+  let openRouterConfigured = false;
+  const hasOpenRouter = () => openRouterConfigured;
+  const refreshOpenRouterStatus = async () => {
+    try {
+      const res = await fetch('/api/openrouter/status', { cache: 'no-store' });
+      const data = res.ok ? await res.json() : null;
+      openRouterConfigured = Boolean(data?.configured);
+    } catch {
+      openRouterConfigured = false;
+    }
+    return openRouterConfigured;
+  };
   const enabled = () => hasOpenRouter() || hasOpenAI() || hasClaude();
   const provider = () => {
     const pref = store.ai.provider.get();
@@ -617,41 +810,92 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
   // Fast structured parse of the chat message (no web search needed).
   const askClaude = (userInput) => claudeJSON({ system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024 });
 
-  // OpenRouter (OpenAI-compatible, CORS-friendly, routes to any model).
-  const openRouterJSON = async ({ model, system, user, maxTokens, web = false }) => {
-    const key = store.ai.openrouterKey.get();
-    if (!key) throw new Error('No OpenRouter key set.');
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  // Current OpenRouter list pricing (USD/token), checked 2026-07-15. The API
+  // response cost is preferred whenever OpenRouter returns it; these values are
+  // only a transparent fallback for an immediate in-app estimate.
+  const OPENROUTER_PRICING = {
+    'openai/gpt-5.6-luna':          { input: 1.00 / 1e6, output: 6.00 / 1e6 },
+    'google/gemini-3-flash-preview':{ input: 0.50 / 1e6, output: 3.00 / 1e6 },
+    'google/gemini-3.1-flash-lite': { input: 0.25 / 1e6, output: 1.50 / 1e6 },
+    'openai/gpt-5.6-terra':         { input: 2.50 / 1e6, output: 15.00 / 1e6 },
+    'google/gemini-3.5-flash':      { input: 1.50 / 1e6, output: 9.00 / 1e6 },
+    'google/gemini-2.5-flash':      { input: 0.30 / 1e6, output: 2.50 / 1e6 },
+    'openai/gpt-4.1-mini':          { input: 0.40 / 1e6, output: 1.60 / 1e6 },
+    'qwen/qwen3-32b':               { input: 0.08 / 1e6, output: 0.28 / 1e6 },
+    'google/gemini-2.5-flash-lite': { input: 0.10 / 1e6, output: 0.40 / 1e6 },
+  };
+  const WEB_RESEARCH_TOOL = {
+    type: 'openrouter:web_search',
+    parameters: { engine: 'exa', max_results: 5, max_total_results: 15, max_characters: 3500 },
+  };
+  const stageName = {
+    discover: 'Place discovery', reviews: 'Review research', select: 'Vibe selection',
+    present: 'Itinerary presentation', repair: 'Itinerary repair',
+    outfitPlan: 'Outfit board planning', outfitBoardCurate: 'Live-piece visual curation', outfitBoardAudit: 'Cutout-only visual audit',
+  };
+  const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const usageFor = (model, usage = {}) => {
+    const inputTokens = numeric(usage.prompt_tokens ?? usage.input_tokens);
+    const outputTokens = numeric(usage.completion_tokens ?? usage.output_tokens);
+    const searches = numeric(usage.server_tool_use?.web_search_requests);
+    const exactCost = Number(usage.cost);
+    if (Number.isFinite(exactCost) && exactCost >= 0) return { inputTokens, outputTokens, searches, cost: exactCost, estimated: false };
+    const rate = OPENROUTER_PRICING[model] || { input: 0, output: 0 };
+    return {
+      inputTokens, outputTokens, searches,
+      // Exa web search is $0.005/request. It is included only when the API did
+      // not give us the authoritative cost for this response.
+      cost: inputTokens * rate.input + outputTokens * rate.output + searches * 0.005,
+      estimated: true,
+    };
+  };
+
+  // OpenRouter requests go through the same-origin proxy. The proxy owns the
+  // Bearer key, so neither localStorage nor browser requests contain a secret.
+  const openRouterJSON = async ({ model, system, user, messages, maxTokens, tools, stage, runId, temperature = 0.35 }) => {
+    const res = await fetch('/api/openrouter/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`,
-        'HTTP-Referer': location.origin,
-        'X-Title': 'malem',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        messages: messages || [{ role: 'system', content: system }, { role: 'user', content: user }],
         max_tokens: maxTokens || 1024,
-        ...(web ? { plugins: [{ id: 'web' }] } : {}),
+        ...(tools?.length ? { tools } : {}),
+        response_format: { type: 'json_object' },
+        temperature,
       }),
     });
     if (!res.ok) {
       const body = (await res.text().catch(() => '')).slice(0, 300);
-      if (res.status === 401) throw new Error('OpenRouter 401 — that key is invalid. Re-check it in Settings.');
+      if (res.status === 401) throw new Error('OpenRouter 401 — the server key is invalid. Replace OPENROUTER_API_KEY and restart the server.');
       if (res.status === 402) throw new Error('OpenRouter 402 — out of credits. Top up at openrouter.ai/credits.');
       if (res.status === 429) throw new Error('OpenRouter 429 — rate-limited; wait a moment and retry.');
+      if (res.status === 503) throw new Error('OpenRouter is not configured. Set OPENROUTER_API_KEY on the server and restart it.');
       throw new Error(`OpenRouter HTTP ${res.status} — ${body}`);
     }
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) throw new Error('OpenRouter returned no JSON object.');
-    return JSON.parse(m[0]);
+    const actualModel = data.model || model;
+    const usage = usageFor(model, data.usage || {});
+    const meta = {
+      id: `llm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      runId: runId || null,
+      stage: stage || 'chat',
+      label: stageName[stage] || 'Trip parsing',
+      model: actualModel,
+      configuredModel: model,
+      createdAt: new Date().toISOString(),
+      ...usage,
+    };
+    if (stage) store.ai.usage.add(meta);
+    return { json: JSON.parse(m[0]), meta };
   };
 
   const askOpenRouter = (userInput) =>
-    openRouterJSON({ model: store.ai.openrouterModel.get(), system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024 });
+    openRouterJSON({ model: store.ai.openrouterModel.get(), system: SYSTEM_PROMPT, user: userInput, maxTokens: 1024, temperature: 0.2 })
+      .then(result => result.json);
 
   const parseTripViaGPT = async (userInput) => {
     const p = provider();
@@ -765,25 +1009,277 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
     return JSON.parse(match[0]);
   };
 
-  // OpenRouter: the supported web plugin works with fixed models and routers.
-  const generateViaOpenRouter = (trip, profile, weatherObj) => {
-    const base = store.ai.openrouterModel.get();
-    const model = base.replace(/:online$/, '');
-    return openRouterJSON({ model, system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), maxTokens: 12000, web: true });
+  const DISCOVERY_SYSTEM = `You are the discovery stage in malem's travel pipeline. You MUST use the web-search tool before responding. Find at least 24 current, visitable places for the given destination and traveler constraints. Prioritize independent businesses, neighborhood institutions, and publicly accessible places. Search several neighborhoods and sources. The run context includes a variation nonce: use it to explore a different valid evidence set on each run while never sacrificing constraint fit or factual grounding. Do not invent ratings, hours, ownership, or URLs. Return STRICT JSON only:
+{"places":[{"name":"","category":"meal|sight|activity|shopping|rest","neighborhood":"","why":"","businessSize":"small|local-institution|large|public|unknown","sourceUrl":"","checkedAt":"YYYY-MM-DD"}],"researchNotes":[""]}`;
+  const REVIEWS_SYSTEM = `You are the review-research stage in malem's travel pipeline. You MUST use the web-search tool before responding. Given a candidate list, verify current review evidence for each viable place. Prefer official listings, reputable review platforms, and recent review themes. Do not fabricate ratings, counts, or quotes; use null or an empty string when not found. Return STRICT JSON only:
+{"reviews":[{"name":"","rating":null,"reviewCount":null,"reviewSummary":"","reviewSourceUrl":"","sourceUrl":"","checkedAt":"YYYY-MM-DD","cautions":""}]}`;
+  const SELECTION_SYSTEM = `You are the selection stage in malem's travel pipeline. Choose the best places from researched candidate and review evidence for the requested vibe and traveler profile. Favor evidence, fit, variety, geographic coherence, and appropriate pacing over popularity. The variation nonce is a deterministic tie-breaker: when two candidates fit equally well, vary the choice across runs. Never weaken dietary, accessibility, modesty, medical, family, budget, pace, or avoid constraints merely to be different. Do not create or alter factual claims. Return STRICT JSON only:
+{"selected":[{"name":"","category":"meal|sight|activity|shopping|rest","day":1,"priority":1,"selectionReason":""}]}`;
+  const PRESENTATION_SYSTEM = GEN_SYSTEM.replace(
+    'You are malem, an expert real-time travel researcher and planner. You MUST search the live web before answering. Verify every named restaurant, shop, market, attraction, neighborhood business, opening-status claim, rating, and review summary from current sources. Never rely only on model memory when a web tool is available.',
+    'You are malem\'s final itinerary-presentation stage. You receive structured, web-grounded evidence from earlier stages. Use only that evidence for factual place, rating, review, and URL claims; leave unavailable facts null or empty. Do not browse and do not rely on model memory for new factual claims.'
+  );
+
+  const buildPipelineContext = (trip, profile, weatherObj, variationNonce) =>
+    `${buildGenUser(trip, profile, weatherObj)}\n\nVariation nonce for this run: ${variationNonce}.`;
+  const validateTripBundle = (bundle, expectedDays) => {
+    const errors = [];
+    if (!bundle?.destinationMeta?.name) errors.push('destinationMeta.name is missing');
+    const days = bundle?.itinerary?.days;
+    if (!Array.isArray(days)) errors.push('itinerary.days is missing');
+    else {
+      if (days.length !== expectedDays) errors.push(`itinerary.days must contain exactly ${expectedDays} days, got ${days.length}`);
+      days.forEach((day, index) => {
+        if (!Array.isArray(day?.blocks) || day.blocks.length < 3) errors.push(`day ${index + 1} needs at least 3 blocks`);
+        (day?.blocks || []).forEach((block, blockIndex) => {
+          if (!block?.title || !block?.time || !block?.kind) errors.push(`day ${index + 1} block ${blockIndex + 1} is missing title, time, or kind`);
+        });
+      });
+    }
+    const expectKeys = new Set((bundle?.expect || []).map(item => item?.key));
+    ['etiquette','clothing','tipping','prayer','driving','transit','scams','safety','accessibility','phrases','hours','photos','difference']
+      .forEach(key => { if (!expectKeys.has(key)) errors.push(`expect is missing ${key}`); });
+    if (!Array.isArray(bundle?.local) || bundle.local.length < 8) errors.push('local needs at least 8 verified places');
+    if (!Array.isArray(bundle?.packing?.lists) || bundle.packing.lists.length < 4) errors.push('packing.lists is incomplete');
+    return errors;
+  };
+
+  // Four intentionally isolated model calls. Research and review calls have
+  // bounded server-side search; selection and presentation only consume the
+  // structured evidence returned by earlier stages.
+  const generateViaOpenRouter = async (trip, profile, weatherObj) => {
+    const models = store.ai.pipeline.get();
+    const runId = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const variationNonce = crypto.randomUUID();
+    const context = buildPipelineContext(trip, profile, weatherObj, variationNonce);
+    const traceStages = [];
+    const trace = (result) => {
+      traceStages.push({ ...result.meta, response: result.json });
+      return result;
+    };
+    const saveTrace = (error) => {
+      const stages = traceStages.map(({ response, ...meta }) => meta);
+      const run = {
+        id: runId, createdAt: new Date().toISOString(), stageCount: traceStages.length,
+        models: stages.map(stage => stage.model),
+        cost: stages.reduce((sum, stage) => sum + numeric(stage.cost), 0),
+        estimated: stages.some(stage => stage.estimated), stages: traceStages,
+        ...(error ? { error: String(error?.message || error).slice(0, 240) } : {}),
+      };
+      // Keep a single inspectable trace in this browser. The compact usage
+      // ledger remains separate so history does not retain every response.
+      store.ai.lastRun.set(run);
+      return { llmRun: { ...run, stages }, trace: run };
+    };
+    try {
+      const discovery = trace(await openRouterJSON({
+        model: models.discover, system: DISCOVERY_SYSTEM, user: context,
+        maxTokens: 5000, tools: [WEB_RESEARCH_TOOL], stage: 'discover', runId, temperature: 0.55,
+      }));
+      const reviews = trace(await openRouterJSON({
+        model: models.reviews, system: REVIEWS_SYSTEM,
+        user: `${context}\n\nCandidate places from discovery (treat as leads, not facts):\n${JSON.stringify(discovery.json)}`,
+        maxTokens: 5000, tools: [WEB_RESEARCH_TOOL], stage: 'reviews', runId, temperature: 0.2,
+      }));
+      const selection = trace(await openRouterJSON({
+        model: models.select, system: SELECTION_SYSTEM,
+        user: `${context}\n\nCandidate evidence:\n${JSON.stringify(discovery.json)}\n\nReview evidence:\n${JSON.stringify(reviews.json)}`,
+        maxTokens: 3500, stage: 'select', runId, temperature: 0.6,
+      }));
+      let presentation = trace(await openRouterJSON({
+        model: models.present, system: PRESENTATION_SYSTEM,
+        user: `${context}\n\nDiscovery evidence:\n${JSON.stringify(discovery.json)}\n\nReview evidence:\n${JSON.stringify(reviews.json)}\n\nPlaces selected for this traveler:\n${JSON.stringify(selection.json)}\n\nBuild the final itinerary JSON strictly from this evidence. Do not browse or invent missing facts.`,
+        maxTokens: 14000, stage: 'present', runId, temperature: 0.45,
+      }));
+      const validationErrors = validateTripBundle(presentation.json, Number(trip.days));
+      if (validationErrors.length) {
+        presentation = trace(await openRouterJSON({
+          model: models.present,
+          system: PRESENTATION_SYSTEM,
+          user: `${context}\n\nThe previous final JSON failed validation:\n- ${validationErrors.join('\n- ')}\n\nPrevious JSON:\n${JSON.stringify(presentation.json)}\n\nRepair it now. Preserve all grounded evidence and constraints, add no unsupported facts, and return the complete corrected JSON object.`,
+          maxTokens: 14000, stage: 'repair', runId, temperature: 0.15,
+        }));
+        const remainingErrors = validateTripBundle(presentation.json, Number(trip.days));
+        if (remainingErrors.length) throw new Error(`The itinerary did not pass validation after repair: ${remainingErrors.slice(0, 4).join('; ')}`);
+      }
+      const saved = saveTrace();
+      return { bundle: presentation.json, llmRun: saved.llmRun };
+    } catch (error) {
+      saveTrace(error);
+      throw error;
+    }
+  };
+
+  const OUTFIT_PLAN_SYSTEM = `You are malem's travel wardrobe editor. Build one cohesive full-outfit direction per itinerary day from the supplied immutable trip context. Treat the original user input, saved profile, live weather, itinerary, and destination palette as one consistent source of truth. The UI will use the look's destination, activities, name, theme, and vibeWords to retrieve several photographs of complete outfits.
+
+Rules:
+- The profile's wardrobePresentation and styleAgeBand are explicit styling instructions. If wardrobePresentation is "women", create ONLY women's garments, women's footwear, and women's accessories. Never substitute menswear, menswear sizing, or unisex items. If it is "men", do the equivalent for men. If it is "unisex", use gender-neutral pieces. Select silhouettes and styling appropriate to styleAgeBand without stereotyping.
+- destinationMeta.palette and destinationMeta.paletteNote are the LOCKED colour story chosen by the itinerary. Return capsulePalette as those exact hex values in the same order. Every piece.color must use a named colour from that colour story or a neutral needed to support it (ivory, cream, black, white, tan, or metallic). Do not introduce a competing colour palette.
+- Honor every explicit modesty, accessibility, medical, sensory, family, budget, laundry, activity, and avoid constraint.
+- Weather and the actual activities for each day must visibly change the pieces, footwear, layers, and practical notes.
+- Create exactly one board for every itinerary day. Include any needed evening transition piece inside that day's board rather than creating another board.
+- Make looks cohesive but not repetitive. Reuse capsule pieces intentionally and identify them.
+- Describe 4–6 coordinated pieces as the practical recipe for the complete look. Do not write per-item image-search queries.
+- Make name, theme, activityNote, and vibeWords visually specific enough to drive a full-body outfit-inspiration search (for example beach resort, Milan city street style, museum day, or evening dinner).
+- Write short editorial annotations suitable for a modern inspiration gallery. Favor specific fabrics, silhouettes, colors, textures, and practical footwear over brand names.
+
+Return STRICT JSON only:
+{"version":3,"contextSummary":["short immutable constraints"],"capsulePalette":["#hex"],"looks":[{"id":"day-1","day":1,"period":"day","name":"","why":"","weatherNote":"","activityNote":"","vibeWords":[""],"stylingNote":"","pieces":[{"part":"top|bottom|dress|outerwear|shoes|accessory","item":"","color":"","reason":""}],"reuse":["piece reused from another board"]}]}`;
+
+  const OUTFIT_CURATE_SYSTEM = `You are malem's visual fashion editor. You will receive real web-image candidates grouped by wardrobe piece. Select exactly one candidate for every piece. Judge the visible image itself, not brand prestige.
+
+Prioritize:
+- the requested garment type, color, fabric, and silhouette;
+- a clean isolated product, cutout, or flat-lay composition that layers well in a Pinterest-style collage;
+- weather, activity, modesty, accessibility, and budget fidelity from the immutable trip context;
+- the explicit wardrobePresentation: when it is women, accept only a women's product; when it is men, accept only a men's product; when it is unisex, accept only a gender-neutral product. A candidate that is menswear for a women's board (or vice versa) must receive candidateIndex -1;
+- the locked itinerary palette: reject a candidate whose visible dominant garment colour conflicts with its requested piece.color or the palette;
+- a cohesive but not monotonous board.
+
+Never select an image containing a visible person, face, body, hand, limb, mannequin, or worn garment. If a piece group has no model-free product image, use candidateIndex -1 so the UI can show an editorial text placeholder. Do not select a candidate from the wrong piece group. Return STRICT JSON only:
+{"selections":[{"pieceIndex":0,"candidateIndex":0,"confidence":0.0,"reason":""}],"boardNote":""}`;
+
+  const OUTFIT_AUDIT_SYSTEM = `You are a strict binary image auditor for a cutout-only fashion collage. Inspect each labeled image independently.
+
+Reject an image if it contains any visible person, face, body, skin, hand, limb, mannequin, clothing worn by a person, or a full styled outfit on a person. Accept only an individual garment/accessory shown alone as a product cutout, product still life, or flat lay.
+
+Return STRICT JSON only:
+{"audits":[{"pieceIndex":0,"reject":true,"reason":"visible torso wearing garment"}]}`;
+
+  const outfitContext = (trip, profile, weatherObj) => ({
+    originalUserInput: trip.originalInput || '',
+    trip: {
+      // A new trip is always a new creative brief, even when someone enters
+      // the same city twice. This prevents a prior board being reused.
+      id: trip.id || null, destination: trip.destination, days: trip.days, travelers: trip.travelers,
+      arrivalDate: trip.arrivalDate || null, season: trip.season,
+      primaryVibe: trip.primaryVibe, summary: trip.summary,
+    },
+    profile,
+    liveWeather: weatherObj || trip.weather || null,
+    itinerary: trip.bundle?.itinerary || null,
+    destinationMeta: trip.bundle?.destinationMeta || null,
+  });
+
+  const outfitPlanErrors = (plan, days) => {
+    const errors = [];
+    if (!Array.isArray(plan?.looks)) return ['looks is missing'];
+    const dayLooks = plan.looks.filter(look => look?.period === 'day');
+    for (let day = 1; day <= Number(days); day++) {
+      if (dayLooks.filter(look => Number(look.day) === day).length !== 1) errors.push(`day ${day} must have exactly one primary day look`);
+    }
+    if (plan.looks.length !== Number(days)) errors.push('looks must contain exactly one board per itinerary day');
+    plan.looks.forEach((look, index) => {
+      if (!look?.id || !look?.name) errors.push(`look ${index + 1} is missing id or name`);
+      if (!Array.isArray(look?.pieces) || look.pieces.length < 4 || look.pieces.length > 6) errors.push(`look ${index + 1} needs 4–6 pieces`);
+      (look?.pieces || []).forEach((piece, pieceIndex) => {
+        if (!piece?.item) errors.push(`look ${index + 1}, piece ${pieceIndex + 1} needs an item`);
+      });
+    });
+    return errors;
+  };
+
+  const createOutfitPlan = async (trip, profile, weatherObj, force = false) => {
+    if (!hasOpenRouter()) throw new Error('OpenRouter is required for context-aware outfit boards.');
+    const models = store.ai.outfitPipeline.get();
+    const runId = `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const context = outfitContext(trip, profile, weatherObj);
+    const contextHash = outfitRecommender.idFor(`full-look-board-v1:${JSON.stringify(context)}`);
+    if (!force && trip.bundle?.outfits?.version === 3 && trip.bundle?.outfits?.contextHash === contextHash && Array.isArray(trip.bundle.outfits.looks)) {
+      return trip.bundle.outfits;
+    }
+    const variationNonce = crypto.randomUUID();
+    let result = await openRouterJSON({
+      model: models.plan, system: OUTFIT_PLAN_SYSTEM,
+      user: `Immutable trip context:\n${JSON.stringify(context)}\n\nVariation nonce: ${variationNonce}. Create a new capsule direction that still obeys every constraint.`,
+      maxTokens: 6500, stage: 'outfitPlan', runId, temperature: 0.75,
+    });
+    let errors = outfitPlanErrors(result.json, trip.days);
+    const lockedPalette = (context.destinationMeta?.palette || []).map(color => String(color).toLowerCase());
+    if (lockedPalette.length && JSON.stringify((result.json?.capsulePalette || []).map(color => String(color).toLowerCase())) !== JSON.stringify(lockedPalette)) {
+      errors.push('capsulePalette must exactly match the itinerary destination palette');
+    }
+    if (errors.length) {
+      result = await openRouterJSON({
+        model: models.plan, system: OUTFIT_PLAN_SYSTEM,
+        user: `Immutable trip context:\n${JSON.stringify(context)}\n\nThe previous wardrobe JSON failed validation:\n- ${errors.join('\n- ')}\n\nPrevious JSON:\n${JSON.stringify(result.json)}\n\nReturn the complete corrected wardrobe JSON.`,
+        maxTokens: 6500, stage: 'outfitPlan', runId, temperature: 0.15,
+      });
+      errors = outfitPlanErrors(result.json, trip.days);
+      if (lockedPalette.length && JSON.stringify((result.json?.capsulePalette || []).map(color => String(color).toLowerCase())) !== JSON.stringify(lockedPalette)) {
+        errors.push('capsulePalette must exactly match the itinerary destination palette');
+      }
+      if (errors.length) throw new Error(`The outfit plan did not pass validation: ${errors.slice(0, 4).join('; ')}`);
+    }
+    return { ...result.json, version: 3, contextHash, variationNonce, generatedAt: new Date().toISOString(), model: result.meta.model };
+  };
+
+  const curateOutfitBoard = async ({ trip, profile, plan, look, candidateGroups }) => {
+    const model = store.ai.outfitPipeline.get().curate;
+    const context = outfitContext(trip, profile, trip.weather);
+    const content = [{
+      type: 'text',
+      text: `Immutable trip context:\n${JSON.stringify(context)}\n\nBoard direction:\n${JSON.stringify(look)}\n\nHard selection contract: wardrobePresentation=${profile.wardrobePresentation || 'women'}; capsule palette=${JSON.stringify(plan.capsulePalette || [])}. Reject wrong-gendered or wrong-colour products with candidateIndex -1. Each following image is labeled pieceIndex/candidateIndex. Select one per piece.`,
+    }];
+    candidateGroups.forEach((group, pieceIndex) => {
+      group.slice(0, 4).forEach((candidate, candidateIndex) => {
+        content.push({ type: 'text', text: `pieceIndex ${pieceIndex}, candidateIndex ${candidateIndex}: ${candidate.title || candidate.query || 'live web result'}` });
+        content.push({ type: 'image_url', image_url: { url: candidate.url } });
+      });
+    });
+    const result = await openRouterJSON({
+      model, stage: 'outfitBoardCurate', runId: `outfit_board_${plan.variationNonce}`, maxTokens: 1800, temperature: 0.1,
+      messages: [
+        { role: 'system', content: OUTFIT_CURATE_SYSTEM },
+        { role: 'user', content },
+      ],
+    });
+    const selectedContent = [{ type: 'text', text: 'Audit every labeled image. Any visible human or worn garment must be rejected.' }];
+    (result.json?.selections || []).forEach(selection => {
+      const pieceIndex = Number(selection.pieceIndex);
+      const candidateIndex = Number(selection.candidateIndex);
+      const candidate = candidateGroups[pieceIndex]?.[candidateIndex];
+      if (!candidate || candidateIndex < 0) return;
+      selectedContent.push({ type: 'text', text: `pieceIndex ${pieceIndex}` });
+      selectedContent.push({ type: 'image_url', image_url: { url: candidate.url } });
+    });
+    if (selectedContent.length === 1) return { ...result.json, meta: result.meta };
+    const audit = await openRouterJSON({
+      model, stage: 'outfitBoardAudit', runId: `outfit_board_${plan.variationNonce}`, maxTokens: 1000, temperature: 0,
+      messages: [
+        { role: 'system', content: OUTFIT_AUDIT_SYSTEM },
+        { role: 'user', content: selectedContent },
+      ],
+    });
+    const audited = new Map((audit.json?.audits || []).map(item => [Number(item.pieceIndex), item?.reject === false]));
+    const rejected = new Set((result.json?.selections || [])
+      .map(item => Number(item.pieceIndex))
+      .filter(pieceIndex => !audited.get(pieceIndex)));
+    return {
+      ...result.json,
+      selections: (result.json?.selections || []).map(selection => rejected.has(Number(selection.pieceIndex))
+        ? { ...selection, candidateIndex: -1, confidence: 0, reason: 'Removed by the cutout-only visual audit.' }
+        : selection),
+      meta: result.meta,
+      auditMeta: audit.meta,
+    };
   };
 
   const generateTrip = async (trip, profile, weatherObj) => {
     const p = provider();
     if (p === 'openrouter') return await generateViaOpenRouter(trip, profile, weatherObj);
-    if (p === 'claude') return await generateViaClaude(trip, profile, weatherObj);
-    if (p === 'openai') return await generateViaOpenAI(trip, profile, weatherObj);
+    if (p === 'claude') return { bundle: await generateViaClaude(trip, profile, weatherObj), llmRun: null };
+    if (p === 'openai') return { bundle: await generateViaOpenAI(trip, profile, weatherObj), llmRun: null };
     return null;
   };
 
   // Legacy alias
   const hasKey = enabled;
 
-  return { enabled, hasKey, hasOpenAI, hasClaude, hasOpenRouter, provider, parseTripViaGPT, generateTrip };
+  return {
+    enabled, hasKey, hasOpenAI, hasClaude, hasOpenRouter, refreshOpenRouterStatus,
+    provider, parseTripViaGPT, generateTrip, createOutfitPlan, curateOutfitBoard,
+  };
 })();
 
 // ---------- weather: live forecast via Open-Meteo (free, no API key, CORS-open) ----------
@@ -873,87 +1369,115 @@ const imageSearch = (() => {
   return { hasKeys, search, first, clearCache };
 })();
 
-// ---------- pinterest: search Pinterest for outfit inspo (no login, no board) ----------
-// Uses Pinterest's public search URL, scraped through a chain of CORS proxies.
-// Falls back gracefully to Unsplash-by-keyword when Pinterest is unreachable.
+// ---------- pinterest: bounded full-look outfit inspiration retrieval ----------
 const pinterest = (() => {
-  const CORS_PROXIES = [
-    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-  ];
-
-  // Compose a Pinterest search query from the trip and (optionally) a specific look.
-  // Example: "Istanbul modest summer evening outfit inspiration".
-  const buildQuery = (trip, profile, look) => {
-    const destName = (trip.bundle?.destinationMeta?.name || DATA.destinations.find(d => d.key === trip.destination)?.name || trip.destination || '').toString().toLowerCase();
-    const season = trip.season || '';
+  const STORAGE_KEY = 'malem.outfitSearchCache.v3';
+  const FRESH_MS = 24 * 60 * 60 * 1000;
+  const STALE_MS = 7 * FRESH_MS;
+  const MAX_SAVED_QUERIES = 36;
+  const MAX_PINS_PER_QUERY = 12;
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 180).toLowerCase();
+  const uniqueWords = (value) => {
+    const seen = new Set();
+    return String(value || '').split(/\s+/).filter(word => {
+      const key = word.toLowerCase().replace(/[^a-z0-9'-]/g, '');
+      return key && !seen.has(key) && seen.add(key);
+    }).join(' ');
+  };
+  const locationLabel = (trip) => {
+    const meta = trip.bundle?.destinationMeta || {};
+    const fallbackName = String(trip.destination || '').replace(/[-_]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+    const name = meta.name || DATA.destinations.find(d => d.key === trip.destination)?.name || fallbackName;
+    const country = meta.country || '';
+    return [country, name].filter((part, index, all) => part && all.findIndex(other => other.toLowerCase() === part.toLowerCase()) === index).join(' ');
+  };
+  const settingFor = (look, itineraryDay, trip) => {
+    const text = [
+      look?.name, look?.theme, look?.why, look?.weatherNote, look?.activityNote,
+      ...(look?.vibeWords || []),
+      itineraryDay?.theme,
+      ...(itineraryDay?.blocks || []).flatMap(block => [block.title, block.kind]),
+      trip?.summary, trip?.primaryVibe,
+      trip?.bundle?.destinationMeta?.plug, trip?.bundle?.destinationMeta?.culturalNote,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/beach|coast|coastal|seaside|swim|island|resort|waterfront|boat|sailing/.test(text)) return 'beach resort';
+    if (/hike|trail|mountain|outdoor|nature|national park/.test(text)) return 'outdoor walking';
+    if (/dinner|evening|night|opera|theatre|theater|cocktail/.test(text)) return 'evening';
+    if (/museum|gallery|café|cafe|shopping|market|old town|city|architecture/.test(text)) return 'city street style';
+    return 'travel street style';
+  };
+  const buildQueries = (trip, profile, look, itineraryDay) => {
+    const location = locationLabel(trip);
+    const audience = profile.wardrobePresentation === 'men' ? "men's" : profile.wardrobePresentation === 'unisex' ? 'unisex' : "women's";
+    const ageStyle = profile.styleAgeBand === 'teen' ? 'teen' : profile.styleAgeBand === 'mature' ? 'mature' : '';
     const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
-    const evening = look && String(look.name || look).toLowerCase().includes('evening');
-    const timeOfDay = evening ? 'evening' : 'daytime';
+    const setting = settingFor(look, itineraryDay, trip);
+    const vibe = [...(look?.vibeWords || []), look?.theme, look?.name].filter(Boolean).join(' ');
     const extra = store.pinterest.extraKeywords.get();
-    const lookName = look && String(look.name || look.look || '').toLowerCase();
-    const theme = look && String(look.theme || '').toLowerCase();
-    const day = look && look.dayIndex ? `day ${look.dayIndex}` : '';
-    const parts = [destName, modest, season, day, theme, lookName, timeOfDay, 'outfit', 'inspiration'];
-    if (extra) parts.push(extra);
-    return parts.filter(Boolean).join(' ');
+    return [
+      `${location} ${trip.season || ''} ${setting} ${audience} ${ageStyle} ${modest} full outfit inspiration ${extra}`,
+      `${location} ${vibe} ${audience} ${modest} full body travel outfit lookbook ${extra}`,
+    ].map(query => normalize(uniqueWords(query))).filter((query, index, all) => query && all.indexOf(query) === index).slice(0, 2);
   };
-
-  const fetchThroughProxy = async (targetUrl) => {
-    let lastErr;
-    for (const build of CORS_PROXIES) {
-      try {
-        const res = await fetch(build(targetUrl), {
-          headers: { 'Accept': 'text/html,application/xhtml+xml,*/*' },
-        });
-        if (!res.ok) { lastErr = new Error(`Proxy HTTP ${res.status}`); continue; }
-        const text = await res.text();
-        if (text && text.length > 200) return text;
-        lastErr = new Error('Empty response from proxy');
-      } catch (e) { lastErr = e; }
-    }
-    throw lastErr || new Error('All CORS proxies failed.');
-  };
-
-  // Pull Pinterest CDN image URLs out of the HTML.
-  const extractPinImagesFromHTML = (html) => {
-    const set = new Set();
-    // Pinterest commonly embeds URLs inside JSON where slashes are escaped.
-    const normalized = String(html || '')
-      .replace(/\\u002F/gi, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
-    // Direct references to i.pinimg.com (Pinterest's image CDN).
-    const patterns = [
-      /https:\/\/i\.pinimg\.com\/[0-9]+x\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
-      /https:\/\/i\.pinimg\.com\/originals\/[a-z0-9\/]+\.(?:jpg|jpeg|png|webp)/gi,
-    ];
-    patterns.forEach(p => { (normalized.match(p) || []).forEach(u => set.add(u)); });
-    // Upscale small results (Pinterest serves multiple sizes at the same path).
-    return [...set].map(u => u.replace(/\/236x\//, '/474x/').replace(/\/60x60_RS\//, '/474x/'));
-  };
-
+  const buildQuery = (trip, profile, look, itineraryDay) => buildQueries(trip, profile, look, itineraryDay)[0] || '';
   const searchURL = (query) => `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}&rs=typed`;
-
-  // Cache per query so we don't re-fetch on every render.
-  const _cache = new Map(); // query -> Promise<string[]>
+  const readSaved = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } };
+  const savedPins = (query, maxAge) => {
+    const entry = readSaved()[query];
+    return entry && Date.now() - Number(entry.savedAt) <= maxAge && Array.isArray(entry.pins) ? entry.pins.slice(0, MAX_PINS_PER_QUERY) : [];
+  };
+  const savePins = (query, pins) => {
+    if (!pins.length) return;
+    try {
+      const saved = readSaved();
+      saved[query] = { savedAt: Date.now(), pins: pins.slice(0, MAX_PINS_PER_QUERY) };
+      const trimmed = Object.fromEntries(Object.entries(saved).sort((a, b) => Number(b[1]?.savedAt) - Number(a[1]?.savedAt)).slice(0, MAX_SAVED_QUERIES));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {}
+  };
+  const _cache = new Map();
+  let batch = { remaining: 12 };
+  const beginBatch = (maximum = 12) => { batch = { remaining: Math.max(1, Math.min(Number(maximum) || 12, 12)) }; };
   const searchPins = (query) => {
-    if (!query) return Promise.resolve([]);
-    if (_cache.has(query)) return _cache.get(query);
-    const p = fetch(`/api/pinterest?q=${encodeURIComponent(query)}`)
-      .then(async r => {
-        if (!r.ok) throw new Error(`Pinterest endpoint HTTP ${r.status}`);
-        const data = await r.json();
-        if (!data.images?.length) throw new Error('Pinterest endpoint returned no images');
-        return data.pins?.length ? data.pins : data.images.map(image => ({ image, title: query, sourceUrl: searchURL(query) }));
+    const key = normalize(query);
+    if (!key) return Promise.resolve([]);
+    if (_cache.has(key)) return _cache.get(key);
+    const fresh = savedPins(key, FRESH_MS);
+    if (fresh.length) {
+      const hit = Promise.resolve(fresh);
+      _cache.set(key, hit);
+      return hit;
+    }
+    const stale = savedPins(key, STALE_MS);
+    if (batch.remaining <= 0) return Promise.resolve(stale);
+    batch.remaining -= 1;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6500);
+    const p = fetch(`/api/pinterest?q=${encodeURIComponent(key)}`, { cache: 'force-cache', signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error(`Outfit image endpoint HTTP ${response.status}`);
+        const data = await response.json();
+        const pins = data.pins?.length ? data.pins : (data.images || []).map(image => ({ image, title: key, sourceUrl: searchURL(key) }));
+        const seen = new Set();
+        const unique = pins.filter(pin => pin?.image && !seen.has(pin.image) && seen.add(pin.image)).slice(0, MAX_PINS_PER_QUERY);
+        if (unique.length) savePins(key, unique);
+        return unique.length ? unique : stale;
       })
-      .catch(() => fetchThroughProxy(searchURL(query)).then(extractPinImagesFromHTML).then(images => images.map(image => ({ image, title: query, sourceUrl: searchURL(query) }))))
-      .catch((err) => { console.warn('Pinterest search failed:', err.message); return []; });
-    _cache.set(query, p);
+      .catch(error => {
+        console.warn('Full-outfit search degraded:', error.message);
+        return stale;
+      })
+      .finally(() => clearTimeout(timeout));
+    _cache.set(key, p);
     return p;
   };
-  const clearCache = () => _cache.clear();
+  const clearCache = ({ persistent = false } = {}) => {
+    _cache.clear();
+    if (persistent) localStorage.removeItem(STORAGE_KEY);
+  };
+  const budgetStatus = () => ({ ...batch });
 
-  return { buildQuery, searchPins, searchURL, clearCache };
+  return { buildQuery, buildQueries, searchPins, searchURL, clearCache, beginBatch, budgetStatus, settingFor, locationLabel };
 })();
 
 // ---------- outfitRecommender: a tiny, local Pinterest-style ranking stack ----------
@@ -1084,7 +1608,11 @@ const outfitRecommender = (() => {
       const pixels = context.getImageData(0, 0, 4, 4).data; const values = [];
       for (let i = 0; i < pixels.length; i += 4) values.push(pixels[i] / 255, pixels[i + 1] / 255, pixels[i + 2] / 255);
       upsert(candidate, normalize(values));
-    } catch (error) { console.warn('Could not index outfit image:', error.message); }
+    } catch (error) {
+      // Cross-origin images commonly block canvas reads even though the image
+      // itself renders correctly. Treat that as an expected visual-vector miss.
+      if (error?.name !== 'SecurityError') console.warn('Could not index outfit image:', error.message);
+    }
   };
   const clearUser = (user) => write(EVENT_KEY, events().filter(e => e.user !== user));
   const stats = (user) => ({ indexed: Object.keys(vectorDb()).length, signals: events().filter(e => e.user === user).length, ...userProfile(user) });
@@ -1334,7 +1862,13 @@ const engine = (() => {
 
   // ----- Local -----
   const buildLocal = (ctx) => {
-    const list = DATA.places[ctx.destination] || [];
+    const list = DATA.places[ctx.destination] || [
+      { name: 'Independent neighborhood café', sub: 'Use the map near your accommodation and choose a busy, well-reviewed independent café.', mix: 'neighborhood', cat: 'food', traffic: 'med' },
+      { name: 'Local market or food hall', sub: 'Ask your host which market residents use, then verify today’s opening hours before leaving.', mix: 'hidden', cat: 'food', traffic: 'med' },
+      { name: 'Small cultural space', sub: 'Look for an independent gallery, workshop, or community museum with current opening information.', mix: 'small-business', cat: 'culture', traffic: 'low' },
+      { name: 'Neighborhood green space', sub: 'Choose a nearby park, waterfront, or public garden with a route that fits your mobility needs.', mix: 'neighborhood', cat: 'outdoors', traffic: 'low' },
+      { name: 'Locally recommended shop', sub: 'Prioritize a locally owned shop with recent reviews instead of a generic souvenir stop.', mix: 'small-business', cat: 'shopping', traffic: 'med' },
+    ];
     const mix = new Set(ctx.mix || []);
     const cat = ctx.category || 'all';
     return list.filter(p => (mix.size ? mix.has(p.mix) : true) && (cat === 'all' || p.cat === cat)).map(p => ({
@@ -1362,7 +1896,32 @@ const engine = (() => {
     accessibility:'med', phrases:'high', hours:'high', photos:'high', difference:'high',
   };
   const buildExpect = (destinationKey) => {
-    const e = DATA.expectations[destinationKey]; if (!e) return [];
+    const e = DATA.expectations[destinationKey];
+    if (!e) {
+      const destination = String(destinationKey || 'your destination')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, (character) => character.toUpperCase());
+      const fallback = {
+        etiquette: `Observe local cues in ${destination}; greetings, personal space, and queueing customs can vary by neighborhood and setting.`,
+        clothing: 'Pack adaptable layers and verify dress rules before religious, ceremonial, or formal sites.',
+        tipping: 'Check the bill for service charges and confirm current tipping norms with your accommodation or a recent official visitor source.',
+        transit: 'Download an offline map, confirm the last return service, and use official transport or licensed ride providers.',
+        safety: 'Keep valuables controlled, use well-lit routes after dark, and check current official travel advisories before departure.',
+        accessibility: 'Accessibility varies by venue. Contact important stops directly and keep a backup route or seated break nearby.',
+        phrases: 'Save greetings, thanks, please, and an allergy or accessibility request in the local language before arrival.',
+        hours: 'Verify same-day opening hours and reservation requirements; holidays and seasonal schedules can change quickly.',
+        photos: 'Ask before photographing people, ceremonies, security areas, or private interiors.',
+        difference: 'Treat this as preparation, not a rulebook: follow current local guidance and adjust respectfully in context.',
+      };
+      return Object.entries(fallback).map(([key, text]) => ({
+        key,
+        label: CATEGORY_LABELS[key],
+        text,
+        confidence: 'general',
+        updated: new Date().toISOString().slice(0, 10),
+        source: 'General fallback — verify locally',
+      }));
+    }
     return Object.entries(CATEGORY_LABELS).map(([key, label]) => ({
       key, label, text: e[key] || '', confidence: CATEGORY_CONFIDENCE[key],
       updated: DATA.meta.updated, source: DATA.meta.sources[0],
@@ -1558,70 +2117,150 @@ const engine = (() => {
 
 // ---------- auth ----------
 const auth = (() => {
-  const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(16); };
+  let user = null;
+  let syncTimer = null;
+  let syncChain = Promise.resolve();
+  let stateDirty = false;
 
-  const signup = (name, email, password) => {
-    email = (email || '').trim().toLowerCase();
-    if (!email || !password) throw new Error('Email and password required.');
-    const map = store.accounts.all();
-    if (map[email]) throw new Error('An account with that email already exists here.');
-    map[email] = { name: (name || email.split('@')[0]).trim(), hash: hash(password) };
-    store.accounts.save(map); store.session.set({ email }); return map[email];
-  };
-  const signin = (email, password) => {
-    email = (email || '').trim().toLowerCase();
-    const acc = store.accounts.all()[email];
-    if (!acc || acc.hash !== hash(password)) throw new Error('That email and password combination does not match an account here.');
-    store.session.set({ email }); return acc;
-  };
-  const signout = () => store.session.clear();
-  const current = () => {
-    const s = store.session.get(); if (!s) return null;
-    const acc = store.accounts.all()[s.email];
-    return acc ? { email: s.email, ...acc } : null;
+  const request = async (path, options = {}) => {
+    let response;
+    try {
+      response = await fetch(`/api/${path}`, {
+        credentials: 'same-origin',
+        ...options,
+        headers: {
+          ...(options.body ? { 'content-type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+    } catch {
+      throw new Error('The account service is unavailable. Check your connection and try again.');
+    }
+    let body = {};
+    try { body = await response.json(); } catch {}
+    if (!response.ok) {
+      const error = new Error(body.error || 'The account service could not complete the request.');
+      error.status = response.status;
+      throw error;
+    }
+    return body;
   };
 
-  const useDemo = () => {
-    const email = 'amina.demo@malem.app';
-    const map = store.accounts.all();
-    if (!map[email]) { map[email] = { name: 'Amina', hash: hash('demo1234') }; store.accounts.save(map); }
-    store.profile.save(email, {
-      version: 1,
-      vibes: ['local', 'food-focused', 'family-friendly'],
-      budget: 'comfort', pace: 'balanced',
-      dietary: { halal: true, kosher: false, vegan: false, vegetarian: false, glutenFree: false, allergies: ['peanuts'], other: 'no pork' },
-      accessibility: { stepFree: true, lowVision: false, lowHearing: false, seatingBreaks: true, notes: 'occasional wheelchair user (Nour)' },
-      religiousCultural: 'Prefers to keep afternoon prayer window; Fridays quieter.',
-      modesty: 'modest',
-      medical: { devices: 'CPAP machine', medications: 'Insulin (refrigerated)', reminderCadence: 'twice-daily' },
-      family:  { childrenAges: [5, 9], babyOnBoard: false, notes: 'nap window 14:30–15:30 for the 5-year-old' },
-      avoid: ['crowded nightclubs', 'extreme heights'],
+  const hydrate = async ({ preferLocal = false } = {}) => {
+    if (!user) return;
+    const localExists = store.cloud.hasLocalState(user.email);
+    const serverState = await request('state');
+    const serverHasContent = Boolean(
+      serverState?.profile
+      || serverState?.trips?.length
+      || serverState?.group?.length
+      || serverState?.journal?.length
+    );
+    if (preferLocal && localExists && !serverHasContent) {
+      await request('state', { method: 'PUT', body: JSON.stringify(store.cloud.snapshot(user.email)) });
+      return;
+    }
+    store.cloud.hydrate(user.email, serverState);
+  };
+  const hydrateSafely = async (options) => {
+    try {
+      await hydrate(options);
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('malem:sync-error', { detail: error.message }));
+    }
+  };
+
+  const syncNow = () => {
+    if (!user || !stateDirty) return syncChain;
+    stateDirty = false;
+    const email = user.email;
+    const snapshot = store.cloud.snapshot(email);
+    syncChain = syncChain
+      .catch(() => {})
+      .then(() => request('state', {
+        method: 'PUT',
+        body: JSON.stringify(snapshot),
+        keepalive: true,
+      }))
+      .catch((error) => {
+        stateDirty = true;
+        window.dispatchEvent(new CustomEvent('malem:sync-error', { detail: error.message }));
+        throw error;
+      });
+    return syncChain;
+  };
+
+  const scheduleSync = () => {
+    if (!user) return;
+    stateDirty = true;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => { syncNow().catch(() => {}); }, 400);
+  };
+  store.cloud.setSyncHandler(scheduleSync);
+
+  const init = async () => {
+    try {
+      user = await request('me');
+    } catch (error) {
+      if (error.status === 401) {
+        user = null;
+        store.cloud.disconnect();
+        return null;
+      }
+      throw error;
+    }
+    store.cloud.connect(user.email);
+    await hydrateSafely({ preferLocal: true });
+    return user;
+  };
+
+  const signup = async (name, email, password) => {
+    user = await request('signup', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password }),
     });
-    store.group.save(email, [
-      { id: 'demo-1', name: 'Amina', ageBand: 'adult', constraints: ['halal','modest'], vibe: 'halal-food-culture' },
-      { id: 'demo-2', name: 'Yusuf', ageBand: 'adult', constraints: ['halal'],           vibe: 'live-like-local' },
-      { id: 'demo-3', name: 'Nour',  ageBand: 'adult', constraints: ['step-free','seating breaks','halal'], vibe: 'relaxed-scenic' },
-      { id: 'demo-4', name: 'Lena',  ageBand: 'child', constraints: ['peanut allergy'],  vibe: 'family-adventure' },
-      { id: 'demo-5', name: 'Tariq', ageBand: 'child', constraints: ['nap 14:30'],       vibe: 'family-adventure' },
-    ]);
-    store.journal.save(email, [{
-      id: 'demo-j1',
-      title: 'Istanbul, day 2 — Balat and the ferry',
-      did: 'Swapped Topkapı queue for a Balat morning walk and a Kadıköy ferry lunch. Kids loved the ferry.',
-      change: 'Skip Grand Bazaar mid-day; do it near opening.',
-      accessAccuracy: 'as-listed', dietAccuracy: 'better', publicEntry: true,
-    }]);
-    // Seed a trip, activate it.
-    const trip = store.trips.add(email, {
-      destination: 'istanbul', arrivalDate: '', days: 4, travelers: 5,
-      primaryVibe: 'halal-food-culture', season: 'summer',
-      summary: 'Halal food & culture in Istanbul',
-    });
-    store.activeTrip.set(email, trip.id);
-    store.session.set({ email });
+    store.cloud.connect(user.email);
+    await hydrateSafely({ preferLocal: true });
+    return user;
   };
 
-  return { signup, signin, signout, current, useDemo };
+  const signin = async (email, password) => {
+    user = await request('login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    store.cloud.connect(user.email);
+    await hydrateSafely();
+    return user;
+  };
+
+  const signout = async () => {
+    clearTimeout(syncTimer);
+    await syncNow().catch(() => {});
+    await request('logout', { method: 'POST' });
+    user = null;
+    stateDirty = false;
+    store.cloud.disconnect();
+  };
+
+  const deleteAccount = async () => {
+    if (!user) throw new Error('You are not signed in.');
+    clearTimeout(syncTimer);
+    stateDirty = false;
+    const email = user.email;
+    await request('account', { method: 'DELETE' });
+    store.cloud.clear(email);
+    user = null;
+    store.cloud.disconnect();
+  };
+
+  const current = () => user;
+  const flush = () => {
+    clearTimeout(syncTimer);
+    return syncNow().catch(() => {});
+  };
+
+  return { init, signup, signin, signout, deleteAccount, current, flush, request };
 })();
 
 // ---------- ui ----------
@@ -1666,7 +2305,9 @@ const ui = (() => {
       authMode = m; const isSignup = m === 'signup';
       $('#name-field').hidden = !isSignup; form.name.required = isSignup;
       $('#auth-title').textContent = isSignup ? 'Create your account.' : 'Welcome back.';
-      $('#auth-lede').textContent  = isSignup ? 'Prototype accounts are stored in this browser.' : "Sign in and tell malem where you're heading.";
+      $('#auth-lede').textContent  = isSignup
+        ? 'Your account and trips will be available anywhere you sign in.'
+        : "Sign in and tell malem where you're heading.";
       $('#auth-submit').textContent = isSignup ? 'Create account' : 'Sign in';
       $('#auth-tag').textContent = isSignup ? 'Sign up' : 'Sign in';
       $('#auth-switch').innerHTML = isSignup
@@ -1676,19 +2317,23 @@ const ui = (() => {
       $('#auth-toggle').addEventListener('click', (e) => { e.preventDefault(); setMode(isSignup ? 'signin' : 'signup'); });
     };
     $('#auth-toggle').addEventListener('click', (e) => { e.preventDefault(); setMode('signup'); });
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const submit = $('#auth-submit');
+      submit.disabled = true;
+      form.setAttribute('aria-busy', 'true');
+      flash('#auth-note', authMode === 'signup' ? 'Creating your account…' : 'Signing you in…');
       try {
-        if (authMode === 'signup') auth.signup(form.name.value, form.email.value, form.password.value);
-        else auth.signin(form.email.value, form.password.value);
+        if (authMode === 'signup') await auth.signup(form.name.value, form.email.value, form.password.value);
+        else await auth.signin(form.email.value, form.password.value);
+        form.reset();
         location.hash = '#/chat';
         route();
       } catch (err) { flash('#auth-note', err.message || 'Something went wrong.'); }
-    });
-    $('#try-demo-account').addEventListener('click', (e) => {
-      e.preventDefault(); auth.useDemo();
-      location.hash = '#/itinerary';
-      route();
+      finally {
+        submit.disabled = false;
+        form.removeAttribute('aria-busy');
+      }
     });
   };
 
@@ -1704,6 +2349,11 @@ const ui = (() => {
     appendChatMessage('user', text);
     appendChatMessage('assistant', 'Reading your trip…', { pending: true });
 
+    // Refresh once at submission so a newly started server becomes usable
+    // immediately, rather than relying on the status check at page load.
+    await ai.refreshOpenRouterStatus();
+    updateChatHint();
+
     // 1) Parse the message into a trip request + profile preferences.
     const parseText = pendingTripText ? `${pendingTripText}\n${text}` : text;
     let result = null;
@@ -1711,7 +2361,17 @@ const ui = (() => {
     if (ai.enabled()) {
       try {
         const gpt = await ai.parseTripViaGPT(parseText);
-        result = { trip: gpt.trip, prefs: gpt.profile, reply: gpt.reply, missing: gpt.missing || [], inferred: [] };
+        // The AI correctly leaves unstated fields null. Merge only its concrete
+        // values over the conservative local parse so UI and downstream stages
+        // always receive the product defaults instead of rendering "null".
+        const localHints = parser.parseTrip(parseText);
+        const concreteAITrip = Object.fromEntries(Object.entries(gpt.trip || {}).filter(([, value]) => value !== null && value !== undefined && value !== ''));
+        const normalizedTrip = { ...(localHints.trip || {}), ...concreteAITrip };
+        if (!normalizedTrip.days) normalizedTrip.days = 4;
+        if (!normalizedTrip.travelers) normalizedTrip.travelers = 1;
+        if (!normalizedTrip.season) normalizedTrip.season = 'summer';
+        if (!normalizedTrip.primaryVibe) normalizedTrip.primaryVibe = 'iconic-first-visit';
+        result = { trip: normalizedTrip, prefs: gpt.profile, reply: gpt.reply, missing: gpt.missing || [], inferred: localHints.inferred || [] };
       } catch (err) { parseError = err; console.error('AI parse failed, falling back to local parser', err); }
     }
     if (!result) {
@@ -1736,39 +2396,66 @@ const ui = (() => {
     const merged = parser.mergeProfile(existing, result.prefs);
     store.profile.save(me.email, merged);
 
-    // 3) Generate the full, web-grounded, weather-aware, personalized plan (Claude only).
-    let wx = null, bundle = null, genError = null;
+    // 3) Generate the full, web-grounded, weather-aware, personalized plan.
+    let wx = null, bundle = null, llmRun = null, genError = null;
     const destGuess = titleCase(result.trip.destination);
     setPendingMessage(`Checking live weather for ${destGuess}…`);
     try { wx = await weather.forecast(result.trip.destination, result.trip.days); }
     catch (e) { console.warn('weather lookup failed', e); }
     if (ai.enabled()) {
       setPendingMessage(`Researching ${destGuess} — real places, this week's live weather, and your profile. This can take up to a minute…`);
-      try { bundle = await ai.generateTrip(result.trip, merged, wx); }
+      try {
+        const generated = await ai.generateTrip(result.trip, merged, wx);
+        bundle = generated?.bundle || null;
+        llmRun = generated?.llmRun || null;
+      }
       catch (e) { console.error('trip generation failed', e); genError = e; }
     }
 
     removePendingMessage();
+    let degraded = false;
+    if (!bundle) {
+      degraded = true;
+      const fallbackPacking = {
+        destination: result.trip.destination,
+        days: result.trip.days,
+        season: result.trip.season,
+        laundry: true,
+        rentThere: true,
+        activities: ['walking-city'],
+      };
+      const staticMeta = DATA.destinations.find(d => d.key === result.trip.destination);
+      bundle = {
+        mode: 'degraded',
+        destinationMeta: staticMeta || {
+          key: result.trip.destination,
+          name: destGuess,
+          country: '',
+          plug: 'Verify the local plug type',
+          culturalNote: 'Live destination research is temporarily unavailable. Verify time-sensitive details before departure.',
+          palette: ['#E4D9BC', '#8E6E4C', '#1F1C15', '#D5C7A6', '#5C4232'],
+          paletteNote: 'A flexible neutral travel palette.',
+        },
+        itinerary: engine.buildItinerary(result.trip, merged),
+        packing: engine.buildPacking(fallbackPacking, merged),
+        local: engine.buildLocal({ destination: result.trip.destination, category: 'all', mix: [] }),
+        expect: engine.buildExpect(result.trip.destination),
+      };
+    }
 
-    // 4) Save the trip with its live weather + generated bundle (when available).
+    // 4) Save either the live plan or an explicitly labelled local fallback.
     const staticDest = DATA.destinations.find(d => d.key === result.trip.destination);
     const vibe = DATA.VIBES.find(v => v.key === result.trip.primaryVibe);
     const destName = bundle?.destinationMeta?.name || staticDest?.name || destGuess;
     const summary = `${vibe ? vibe.title : 'Trip'} in ${destName}`;
-    const trip = store.trips.add(me.email, { ...result.trip, summary, weather: wx, bundle });
+    const trip = store.trips.add(me.email, { ...result.trip, originalInput: parseText, summary, weather: wx, bundle, llmRun });
     store.activeTrip.set(me.email, trip.id);
 
     // 5) Reply, tuned to what actually happened.
     let replyText;
-    if (bundle) {
-      replyText = `Done — I built your ${destName} plan from real places and this week's forecast, shaped around your profile. Open it below.`;
-    } else if (ai.enabled()) {
-      replyText = `I saved your ${destName} trip, but the plan didn't finish generating${genError ? ` (${String(genError.message || genError).slice(0, 140)})` : ' (network or key issue)'}. Check your API key in Settings, then start the trip again.`;
-    } else if (staticDest) {
-      replyText = result.reply || `Saved your ${destName} trip with live Open-Meteo weather. Add an OpenRouter, OpenAI, or Anthropic API key in Settings for current web-researched places and reviews.`;
-    } else {
-      replyText = `I saved your ${destName} trip with live weather. To add current places and reviews, connect OpenRouter, OpenAI, or Anthropic in Settings.`;
-    }
+    replyText = degraded
+      ? `Done — I saved a practical ${destName} plan from Malem's on-device planner. Live research is unavailable right now, so verify named places, hours, entry rules, and transport before you go${genError ? ` (${String(genError.message || genError).slice(0, 100)})` : ''}.`
+      : `Done — I built your ${destName} plan from real places and this week's forecast, shaped around your profile. Open it below.`;
     appendChatMessage('assistant', replyText);
     appendTripCard(trip);
     renderTripHistory(me);
@@ -1796,6 +2483,7 @@ const ui = (() => {
     const button = $('#btn-refresh-live');
     const status = $('#research-status');
     if (!trip || !button || !status) return;
+    await ai.refreshOpenRouterStatus();
     if (!ai.enabled()) {
       status.textContent = 'Connect OpenRouter, OpenAI, or Anthropic in Settings to refresh web research.';
       return;
@@ -1806,9 +2494,12 @@ const ui = (() => {
     try {
       const profile = store.profile.load(me.email);
       const wx = await weather.forecast(trip.destination, trip.days);
-      const bundle = await ai.generateTrip(trip, profile, wx);
+      const generated = await ai.generateTrip(trip, profile, wx);
+      const bundle = generated?.bundle || null;
+      const llmRun = generated?.llmRun || null;
+      if (!bundle) throw new Error('The itinerary generator returned no plan.');
       const updated = store.trips.update(me.email, trip.id, {
-        weather: wx, bundle, researchUpdatedAt: new Date().toISOString(),
+        weather: wx, bundle, llmRun, researchUpdatedAt: new Date().toISOString(),
       });
       if (!updated) throw new Error('Could not update the saved trip.');
       status.textContent = `Live research refreshed ${new Date().toLocaleString()}.`;
@@ -1831,7 +2522,7 @@ const ui = (() => {
     el.innerHTML = `
       <div class="head">
         <h4>${escapeHtml(trip.bundle?.destinationMeta?.name || dest?.name || titleCase(trip.destination))}</h4>
-        <span class="stamp">${trip.bundle ? 'Live plan ready' : 'Trip saved'}</span>
+        <span class="stamp">${trip.bundle?.mode === 'degraded' ? 'Offline-ready plan' : trip.bundle ? 'Live plan ready' : 'Trip saved'}</span>
       </div>
       <div class="details">
         <span>${trip.days} day${trip.days > 1 ? 's' : ''}</span>
@@ -1881,9 +2572,10 @@ const ui = (() => {
   const updateChatHint = () => {
     const el = $('#chat-hint');
     const p = ai.provider();
-    if (p === 'claude')      el.innerHTML = 'Powered by Claude (<a href="#" id="chat-settings-link-2">change</a>).';
+    if (p === 'openrouter')  el.innerHTML = 'Powered by OpenRouter (<a href="#" id="chat-settings-link-2">change</a>).';
+    else if (p === 'claude') el.innerHTML = 'Powered by Claude (<a href="#" id="chat-settings-link-2">change</a>).';
     else if (p === 'openai') el.innerHTML = 'Powered by GPT (<a href="#" id="chat-settings-link-2">change</a>).';
-    else                     el.innerHTML = 'Powered by a local parser. <a href="#" id="chat-settings-link-2">Add an OpenAI or Claude key</a> to switch to AI.';
+    else                     el.innerHTML = 'Powered by a local parser. <a href="#" id="chat-settings-link-2">Configure the local OpenRouter server or add another provider key</a> to switch to AI.';
     const l = $('#chat-settings-link-2'); if (l) l.addEventListener('click', (e) => { e.preventDefault(); openSettings(); });
   };
 
@@ -1933,26 +2625,19 @@ const ui = (() => {
   };
 
   // ---- Community (public) ----
-  const getCommunityEntries = () => {
+  const getCommunityEntries = async () => {
     const seeds = (DATA.communityEntries || []).map(e => ({ ...e, source: 'seed' }));
-    const localAccounts = store.accounts.all();
-    const local = [];
-    Object.entries(localAccounts).forEach(([email, acc]) => {
-      const journal = store.journal.load(email);
-      const trip = store.trips.load(email).slice().reverse()[0]; // most recent trip
-      journal.filter(x => x.publicEntry).forEach(x => {
-        local.push({
-          id: `local-${email}-${x.id}`,
-          authorName: acc.name || email.split('@')[0],
-          destination: trip?.destination || 'unknown',
-          date: x.date || '',
-          title: x.title, did: x.did, change: x.change,
-          accessAccuracy: x.accessAccuracy, dietAccuracy: x.dietAccuracy,
-          tags: [], source: 'local',
-        });
-      });
-    });
-    return [...seeds, ...local].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    try {
+      const response = await auth.request('community');
+      const published = (response.entries || []).map((entry) => ({
+        ...entry,
+        authorName: entry.author,
+        source: 'community',
+      }));
+      return [...seeds, ...published].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    } catch {
+      return seeds;
+    }
   };
   const initPublic = () => {
     const destSel = $('#public-filter-dest');
@@ -1968,7 +2653,7 @@ const ui = (() => {
       location.hash = me ? '#/itinerary' : '#/auth';
     });
   };
-  const renderCommunity = () => {
+  const renderCommunity = async () => {
     const me = auth.current();
     const btn = $('#public-signin');
     if (me) { btn.textContent = 'Back to your trip'; btn.setAttribute('href', '#/itinerary'); }
@@ -1976,10 +2661,12 @@ const ui = (() => {
 
     const dest = $('#public-filter-dest').value;
     const tag  = $('#public-filter-tag').value;
-    let entries = getCommunityEntries();
+    const root = $('#public-entries');
+    root.setAttribute('aria-busy', 'true');
+    let entries = await getCommunityEntries();
     if (dest !== 'all') entries = entries.filter(e => e.destination === dest);
     if (tag  !== 'all') entries = entries.filter(e => (e.tags || []).includes(tag));
-    const root = $('#public-entries');
+    root.removeAttribute('aria-busy');
     if (!entries.length) { root.innerHTML = `<p class="hint">Nothing yet in that view. Try another filter.</p>`; return; }
     root.innerHTML = entries.map(e => {
       const destName = DATA.destinations.find(d => d.key === e.destination)?.name || e.destination;
@@ -1987,7 +2674,7 @@ const ui = (() => {
         <article class="pub-entry">
           <div class="head">
             <div>
-              <h3>${escapeHtml(e.title)}${e.source === 'local' ? '<span class="badge-local">Yours</span>' : ''}</h3>
+              <h3>${escapeHtml(e.title)}</h3>
               <div class="author">by ${escapeHtml(e.authorName)}${e.date ? ` · ${escapeHtml(e.date)}` : ''}</div>
             </div>
             <span class="dest">${escapeHtml(destName)}</span>
@@ -2011,6 +2698,8 @@ const ui = (() => {
     const f = $('#profile-form'); const p = store.emptyProfile();
     p.vibes = $$('[data-chips="vibes"] input:checked').map(i => i.value);
     p.budget = f.budget.value; p.pace = f.pace.value;
+    p.wardrobePresentation = f.wardrobePresentation.value || 'women';
+    p.styleAgeBand = f.styleAgeBand.value || 'adult';
     p.dietary.halal      = $('[data-diet="halal"]').checked;
     p.dietary.kosher     = $('[data-diet="kosher"]').checked;
     p.dietary.vegan      = $('[data-diet="vegan"]').checked;
@@ -2038,6 +2727,8 @@ const ui = (() => {
     const f = $('#profile-form');
     $$('[data-chips="vibes"] input').forEach(i => { i.checked = (p.vibes || []).includes(i.value); });
     f.budget.value = p.budget || 'mid'; f.pace.value = p.pace || 'balanced';
+    f.wardrobePresentation.value = p.wardrobePresentation || 'women';
+    f.styleAgeBand.value = p.styleAgeBand || 'adult';
     $('[data-diet="halal"]').checked      = !!p.dietary.halal;
     $('[data-diet="kosher"]').checked     = !!p.dietary.kosher;
     $('[data-diet="vegan"]').checked      = !!p.dietary.vegan;
@@ -2068,13 +2759,57 @@ const ui = (() => {
     $$('#sheet-profile [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
     $('#save-profile').onclick = () => { store.profile.save(me.email, readProfileForm()); flash('#save-note', 'Saved.'); };
     $('#reset-profile').onclick = () => {
-      if (!confirm('Clear your saved profile? Local only.')) return;
+      if (!confirm('Clear your saved profile on every signed-in device?')) return;
       store.profile.clear(me.email); writeProfileForm(store.emptyProfile());
       flash('#save-note', 'Profile cleared.');
     };
   };
 
   // ---- Settings sheet (connected accounts) ----
+  const formatLLMCost = (cost) => {
+    const amount = Number(cost) || 0;
+    return amount < 0.01 ? `$${amount.toFixed(4)}` : `$${amount.toFixed(3)}`;
+  };
+  const renderPipelineUsage = () => {
+    const root = $('#pipeline-usage');
+    const count = $('#pipeline-model-count');
+    if (!root || !count) return;
+    const configured = store.ai.pipeline.get();
+    const configuredModels = new Set(Object.values(configured));
+    const all = store.ai.usage.all();
+    const itineraryStages = new Set(['discover', 'reviews', 'select', 'present', 'repair']);
+    const latestRunId = all.find(entry => itineraryStages.has(entry.stage) && entry.runId)?.runId;
+    const latest = latestRunId ? all.filter(entry => entry.runId === latestRunId) : [];
+    count.textContent = `4 stages · ${configuredModels.size} model${configuredModels.size === 1 ? '' : 's'}`;
+    if (!latest.length) {
+      root.textContent = `Configured: 4 isolated calls per itinerary using ${configuredModels.size} distinct model${configuredModels.size === 1 ? '' : 's'}. No completed itinerary calls yet.`;
+      return;
+    }
+    const total = latest.reduce((sum, entry) => sum + (Number(entry.cost) || 0), 0);
+    const searches = latest.reduce((sum, entry) => sum + (Number(entry.searches) || 0), 0);
+    const estimated = latest.some(entry => entry.estimated);
+    const details = latest.slice().reverse().map(entry => `${entry.label}: ${formatLLMCost(entry.cost)}`).join(' · ');
+    const repaired = latest.some(entry => entry.stage === 'repair');
+    root.textContent = `Latest itinerary: 4 core calls${repaired ? ' + 1 automatic repair' : ''}, ${formatLLMCost(total)}${estimated ? ' estimated' : ''}, ${searches} web search${searches === 1 ? '' : 'es'}. ${details}`;
+  };
+  const renderPipelineTrace = () => {
+    const root = $('#pipeline-trace-output');
+    if (!root) return;
+    const run = store.ai.lastRun.get();
+    if (!run) {
+      root.textContent = 'No OpenRouter itinerary run yet. After a trip is generated, each stage’s JSON response will appear here.';
+      return;
+    }
+    const stageHtml = (run.stages || []).map(stage => {
+      const response = stage.response == null ? 'No response was recorded.' : JSON.stringify(stage.response, null, 2);
+      const meta = `${stage.model || stage.configuredModel} · ${formatLLMCost(stage.cost)}${stage.estimated ? ' estimated' : ''} · ${stage.inputTokens || 0} input / ${stage.outputTokens || 0} output tokens${stage.searches ? ` · ${stage.searches} web searches` : ''}`;
+      return `<article style="margin:.85rem 0;padding:.75rem;border:1px solid var(--line, #ddd);border-radius:.5rem;">
+        <strong>${escapeHtml(stage.label || stage.stage)}</strong><br /><small>${escapeHtml(meta)}</small>
+        <pre style="max-height:20rem;overflow:auto;white-space:pre-wrap;margin:.65rem 0 0;">${escapeHtml(response)}</pre>
+      </article>`;
+    }).join('');
+    root.innerHTML = `${run.error ? `<p><strong>Run stopped:</strong> ${escapeHtml(run.error)}</p>` : ''}${stageHtml || 'No completed stages were recorded.'}`;
+  };
   const refreshConnectionStatuses = () => {
     const setStatus = (id, connected) => {
       const el = $('#conn-status-' + id); if (!el) return;
@@ -2090,10 +2825,39 @@ const ui = (() => {
     if (pin) { pin.textContent = 'Active'; pin.closest('.conn-tile')?.setAttribute('data-connected', 'true'); }
   };
 
+  const clearSavedPlaceFeedback = (noteSelector, button) => {
+    if (button?.dataset.confirm !== 'true') {
+      if (button) {
+        button.dataset.confirm = 'true';
+        button.textContent = 'Confirm clear saved review feedback';
+        setTimeout(() => {
+          button.dataset.confirm = '';
+          button.textContent = button.id === 'clear-place-feedback' ? 'Clear saved place feedback' : 'Clear saved review feedback';
+        }, 5000);
+      }
+      flash(noteSelector, 'Click again within five seconds to delete the saved review feedback.');
+      return;
+    }
+    const removed = store.trips.clearPlaceReviewFeedback();
+    // The latest pipeline trace can include review-stage JSON, so clear it
+    // alongside the per-trip evidence. The cost ledger is intentionally kept.
+    store.ai.lastRun.clear();
+    renderPipelineTrace();
+    route();
+    flash(noteSelector, `Cleared ${removed} saved review field${removed === 1 ? '' : 's'}.`);
+  };
+
   const openSettings = () => {
     const f = $('#settings-form');
-    f.openrouterKey.value   = store.ai.openrouterKey.get();
     f.openrouterModel.value = store.ai.openrouterModel.get();
+    const pipeline = store.ai.pipeline.get();
+    f.pipelineDiscover.value = pipeline.discover;
+    f.pipelineReviews.value = pipeline.reviews;
+    f.pipelineSelect.value = pipeline.select;
+    f.pipelinePresent.value = pipeline.present;
+    const outfitPipeline = store.ai.outfitPipeline.get();
+    f.outfitPlanModel.value = outfitPipeline.plan;
+    f.outfitCurateModel.value = outfitPipeline.curate;
     f.googleImgKey.value = store.images.key.get();
     f.googleImgCx.value  = store.images.cx.get();
     f.openaiKey.value    = store.ai.openaiKey.get();
@@ -2107,14 +2871,26 @@ const ui = (() => {
     f.pinterestKeywords.value = store.pinterest.extraKeywords.get();
 
     refreshConnectionStatuses();
+    renderPipelineUsage();
+    renderPipelineTrace();
 
     $('#sheet-settings').hidden = false;
+    ai.refreshOpenRouterStatus().then(() => refreshConnectionStatuses());
     const close = () => $('#sheet-settings').hidden = true;
     $$('#sheet-settings [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
 
     $('#save-settings').onclick = () => {
-      store.ai.openrouterKey.set(f.openrouterKey.value.trim());
       store.ai.openrouterModel.set(f.openrouterModel.value.trim());
+      store.ai.pipeline.set({
+        discover: f.pipelineDiscover.value,
+        reviews: f.pipelineReviews.value,
+        select: f.pipelineSelect.value,
+        present: f.pipelinePresent.value,
+      });
+      store.ai.outfitPipeline.set({
+        plan: f.outfitPlanModel.value,
+        curate: f.outfitCurateModel.value,
+      });
       store.images.key.set(f.googleImgKey.value.trim());
       store.images.cx.set(f.googleImgCx.value.trim());
       store.ai.openaiKey.set(f.openaiKey.value.trim());
@@ -2130,19 +2906,62 @@ const ui = (() => {
       if (newKw !== oldKw) pinterest.clearCache();
 
       refreshConnectionStatuses();
+      renderPipelineUsage();
+      renderPipelineTrace();
       const p = ai.provider();
       flash('#settings-note', 'Saved.' + (p ? ` AI active (${p}).` : ' No AI configured; local parser.'));
       updateChatHint();
+    };
+
+    $('#clear-place-feedback').onclick = (event) => clearSavedPlaceFeedback('#place-feedback-note', event.currentTarget);
+    $('#delete-account').onclick = async (event) => {
+      if (!window.confirm('Permanently delete this account and all synchronized Malem data? This cannot be undone.')) return;
+      const button = event.currentTarget;
+      button.disabled = true;
+      flash('#delete-account-note', 'Deleting account…');
+      try {
+        await auth.deleteAccount();
+        $('#sheet-settings').hidden = true;
+        location.hash = '#/auth';
+        route();
+      } catch (error) {
+        flash('#delete-account-note', error.message || 'Could not delete the account.');
+        button.disabled = false;
+      }
     };
   };
 
   // ---- App shell + routing ----
   const initApp = () => {
+    const dash = $('#screen-app');
+    const collapseButton = $('#sidebar-collapse');
+    const setSidebarCollapsed = (collapsed) => {
+      dash.dataset.sidebarCollapsed = String(collapsed);
+      collapseButton.setAttribute('aria-expanded', String(!collapsed));
+      collapseButton.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+      collapseButton.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+      collapseButton.querySelector('span').textContent = collapsed ? '›' : '‹';
+      try { localStorage.setItem('malem.sidebarCollapsed.v1', String(collapsed)); } catch {}
+    };
+    setSidebarCollapsed(localStorage.getItem('malem.sidebarCollapsed.v1') === 'true');
+    collapseButton.addEventListener('click', () => setSidebarCollapsed(dash.dataset.sidebarCollapsed !== 'true'));
     $('#btn-new-trip').addEventListener('click', startNewTrip);
     $('#btn-community').addEventListener('click', () => { location.hash = '#/community'; });
     $('#btn-profile').addEventListener('click', openProfileSheet);
     $('#btn-settings').addEventListener('click', openSettings);
-    $('#btn-signout').addEventListener('click', () => { auth.signout(); location.hash = ''; route(); });
+    $('#btn-signout').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await auth.signout();
+        location.hash = '#/auth';
+        route();
+      } catch (error) {
+        flash('#global-status', error.message || 'Could not sign out. Please try again.');
+      } finally {
+        button.disabled = false;
+      }
+    });
     $('#btn-theme').addEventListener('click', toggleTheme);
     $('#side-toggle').addEventListener('click', () => {
       const d = $('#screen-app'); d.dataset.navOpen = d.dataset.navOpen === 'true' ? 'false' : 'true';
@@ -2155,6 +2974,7 @@ const ui = (() => {
     $('#btn-refresh-live').addEventListener('click', refreshActiveTrip);
     $('#toggle-local-controls').addEventListener('click', () => { const f = $('#local-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-local').addEventListener('click', renderLocal);
+    $('#clear-local-place-feedback').addEventListener('click', (event) => clearSavedPlaceFeedback('#local-place-feedback-note', event.currentTarget));
 
     $('#add-member').addEventListener('click', () => {
       const me = auth.current(); const f = $('#member-form');
@@ -2177,9 +2997,28 @@ const ui = (() => {
         did: f.did.value.trim(), change: f.change.value.trim(),
         accessAccuracy: f.accessAccuracy.value, dietAccuracy: f.dietAccuracy.value,
         publicEntry: f.publicEntry.checked,
+        destination: activeTripFor(me.email)?.destination || '',
+        date: new Date().toISOString().slice(0, 10),
       };
       const list = store.journal.load(me.email); list.push(entry); store.journal.save(me.email, list);
       f.reset(); renderJournal(); flash('#journal-note', 'Entry saved.');
+    });
+    $('#journal-list').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-journal-action]');
+      if (!button) return;
+      const me = auth.current();
+      let entries = store.journal.load(me.email);
+      if (button.dataset.journalAction === 'remove') {
+        entries = entries.filter((entry) => String(entry.id) !== button.dataset.id);
+        flash('#journal-note', 'Entry removed.');
+      } else {
+        entries = entries.map((entry) => String(entry.id) === button.dataset.id
+          ? { ...entry, publicEntry: !entry.publicEntry }
+          : entry);
+        flash('#journal-note', button.dataset.public === 'true' ? 'Entry is now private.' : 'Entry published.');
+      }
+      store.journal.save(me.email, entries);
+      renderJournal();
     });
   };
 
@@ -2213,7 +3052,16 @@ const ui = (() => {
     $('#badge-days').textContent = `${trip.days} day${trip.days > 1 ? 's' : ''}`;
     $('#badge-travelers').textContent = `${trip.travelers} traveler${trip.travelers > 1 ? 's' : ''}`;
     $('#badge-vibe').textContent = vibe?.title || trip.primaryVibe;
-    const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
+    const itin = trip.bundle?.itinerary?.days ? trip.bundle.itinerary : null;
+    if (!itin) {
+      $('#itinerary-output').innerHTML = `<div class="recommendation-empty">
+        <strong>This saved trip does not contain a completed live itinerary.</strong>
+        <p>Malem will not display the old repeated template in its place.</p>
+        <button type="button" class="btn primary" data-build-live-itinerary>Build the live itinerary</button>
+      </div>`;
+      $('#itinerary-output [data-build-live-itinerary]')?.addEventListener('click', refreshActiveTrip);
+      return;
+    }
     $('#itinerary-output').innerHTML = (itin.days || []).map((day, i) => `
       <article class="itin-day">
         <header>
@@ -2248,17 +3096,174 @@ const ui = (() => {
   const itemQuery = (v) => String(v || '').split(/\bor\b/i)[0].replace(/,.*$/, '').trim();
   let outfitRenderEpoch = 0;
 
-  const renderOutfits = () => {
+  const renderLiveVisionBoards = async ({ me, trip, profile, itin, destination, epoch, forcePlan = false }) => {
+    const root = $('#outfits-output');
+    $('#outfits-source').textContent = 'Each board uses current, real full-outfit references matched to the destination, itinerary, weather, and requested vibe. Images are sourced from Pinterest and fashion image search—not generated.';
+    root.innerHTML = `<div class="outfit-ai-status">
+      <span class="spinner-dot" aria-hidden="true"></span>
+      <div><strong>Styling the daily inspiration boards…</strong><small>Reading the itinerary and weather, then finding complete looks for each setting.</small></div>
+    </div>`;
+
+    const tripForOutfits = { ...trip, bundle: { ...(trip.bundle || {}), itinerary: itin } };
+    let plan;
+    try {
+      plan = await ai.createOutfitPlan(tripForOutfits, profile, trip.weather, forcePlan);
+      if (epoch !== outfitRenderEpoch) return;
+      const savedBundle = { ...(trip.bundle || {}), outfits: plan };
+      store.trips.update(me.email, trip.id, { bundle: savedBundle });
+    } catch (error) {
+      if (epoch !== outfitRenderEpoch) return;
+      root.innerHTML = `<div class="recommendation-empty"><strong>The outfit planner could not finish.</strong><p>${escapeHtml(error.message || 'Unknown error')}</p><button type="button" class="btn ghost" data-retry-outfits>Try again</button></div>`;
+      root.querySelector('[data-retry-outfits]')?.addEventListener('click', () => renderOutfits(true));
+      return;
+    }
+
+    const looks = plan.looks.slice(0, Number(trip.days));
+    const palette = (plan.capsulePalette || []).filter(color => /^#[0-9a-f]{3,8}$/i.test(color)).slice(0, 6);
+    root.innerHTML = `<div class="recommendation-explainer outfit-workflow">
+      <div><span class="algorithm-dot text"></span><strong>Live context</strong><small>request + profile + itinerary + weather</small></div>
+      <div><span class="algorithm-dot visual"></span><strong>Complete looks</strong><small>destination + activity + vibe searches</small></div>
+      <div><span class="algorithm-dot behavior"></span><strong>Reference gallery</strong><small>several full-outfit ideas per day</small></div>
+    </div>
+    <div class="outfit-context-strip">
+      <div>${(plan.contextSummary || []).map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>
+      <button type="button" class="btn ghost" data-new-capsule>New board direction</button>
+    </div>
+    <div class="vision-board-deck">
+      ${looks.map(look => `
+        <article class="vision-board-card" data-board-look="${escapeHtml(look.id)}">
+          <header class="vision-board-head">
+            <div>
+              <span class="eyebrow">Day ${escapeHtml(look.day)} · ${escapeHtml(destination)}</span>
+              <h3>${escapeHtml(look.name)}</h3>
+            </div>
+            <span class="live-chip">live-sourced</span>
+          </header>
+          <div class="vision-board-canvas">
+            <div class="board-loading"><div class="pin-skeleton"></div><strong>Finding complete outfit references…</strong><small>Searching the location, activity, weather, and style direction.</small></div>
+          </div>
+          <footer class="vision-board-notes">
+            <div class="board-why"><span>the direction</span><p>${escapeHtml(look.why)}</p></div>
+            <div class="board-context">
+              <span>☁ ${escapeHtml(look.weatherNote || 'Weather-aware layers')}</span>
+              <span>⌁ ${escapeHtml(look.activityNote || 'Matched to the day’s route')}</span>
+            </div>
+            <div class="board-palette" aria-label="Capsule colour palette">${palette.map(color => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</div>
+            <button type="button" class="text-button" data-refresh-board>Refresh this board</button>
+          </footer>
+        </article>`).join('')}
+    </div>`;
+
+    const cardForLook = (lookId) => [...root.querySelectorAll('[data-board-look]')]
+      .find(card => card.dataset.boardLook === String(lookId));
+    const claimedReferences = new Set();
+    const retrieveCandidates = async (look) => {
+      const dayNumber = Number(look.day || look.dayIndex) || 1;
+      const itineraryDay = itin.days?.[Math.max(0, dayNumber - 1)] || null;
+      const queries = pinterest.buildQueries(tripForOutfits, profile, look, itineraryDay);
+      const groups = await Promise.all(queries.map(query => pinterest.searchPins(query)));
+      const seen = new Set();
+      const candidates = groups.flatMap((pins, queryIndex) => pins.map((pin, resultIndex) => ({
+        id: outfitRecommender.idFor(pin.image),
+        url: pin.image,
+        title: pin.title || `${look.name} full outfit inspiration`,
+        query: queries[queryIndex],
+        tags: [destination, trip.season, look.name, look.theme, ...(look.vibeWords || [])].filter(Boolean),
+        resultIndex,
+        searchUrl: pin.sourceUrl || pinterest.searchURL(queries[queryIndex]),
+      }))).filter(candidate => candidate.url && !seen.has(candidate.url) && seen.add(candidate.url));
+      const intent = [destination, trip.season, look.name, look.why, look.activityNote, look.weatherNote, ...(look.vibeWords || [])].filter(Boolean).join(' ');
+      const unclaimed = candidates.filter(candidate => !claimedReferences.has(candidate.url));
+      const ranked = outfitRecommender.rank(unclaimed.length >= 3 ? unclaimed : candidates, intent, me.email, 6);
+      ranked.candidates.forEach(candidate => claimedReferences.add(candidate.url));
+      return { candidates: ranked.candidates, queries, intent };
+    };
+    const renderBoard = (card, look, context) => {
+      const canvas = card.querySelector('.vision-board-canvas');
+      if (!context.candidates.length) {
+        const query = context.queries[0] || pinterest.buildQuery(tripForOutfits, profile, look);
+        canvas.innerHTML = `<div class="recommendation-empty board-empty"><strong>Full-look references are temporarily limited.</strong><p>The wardrobe direction is still available below.</p><a href="${escapeHtml(pinterest.searchURL(query))}" target="_blank" rel="noopener">Open this outfit search ↗</a></div>`;
+        return;
+      }
+      canvas.innerHTML = `<div class="board-paper-texture" aria-hidden="true"></div>
+        <div class="board-title-note">${escapeHtml((look.vibeWords || []).slice(0, 3).join(' · ') || look.stylingNote || 'travel capsule')}</div>
+        <div class="board-color-story" aria-label="Locked trip colour story">${palette.map(color => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</div>
+        <div class="board-sticker">${escapeHtml(profile.wardrobePresentation === 'men' ? 'men’s edit' : profile.wardrobePresentation === 'unisex' ? 'unisex edit' : 'women’s edit')}</div>
+        <div class="outfit-reference-grid">
+          ${context.candidates.map((candidate, index) => `
+            <a class="outfit-reference reference-${index + 1}" href="${escapeHtml(safeExternalUrl(candidate.searchUrl) || pinterest.searchURL(candidate.query))}" target="_blank" rel="noopener" aria-label="Open source for full outfit reference ${index + 1}">
+              <span class="cutout-tape" aria-hidden="true"></span>
+              <img src="${escapeHtml(candidate.url)}" data-proxy-src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(`${look.name} full outfit reference ${index + 1}`)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
+              <span>full-look reference ${index + 1}</span>
+            </a>`).join('')}
+        </div>
+        <div class="board-editor-note">${escapeHtml(look.stylingNote || 'Use these complete looks as references, then adapt the details to your capsule.')}</div>`;
+      canvas.querySelectorAll('.outfit-reference img').forEach((image, index) => {
+        const candidate = context.candidates[index];
+        const capture = () => { if (candidate) outfitRecommender.captureVisual(image, candidate); };
+        if (image.complete && image.naturalWidth) capture(); else image.addEventListener('load', capture, { once: true });
+        image.addEventListener('error', () => {
+          if (!image.dataset.triedProxy && image.dataset.proxySrc) {
+            image.dataset.triedProxy = 'true';
+            image.src = image.dataset.proxySrc;
+            return;
+          }
+          image.closest('.outfit-reference')?.classList.add('image-failed');
+        });
+      });
+    };
+    const buildOne = async (look) => {
+      const card = cardForLook(look.id);
+      if (!card || epoch !== outfitRenderEpoch) return;
+      const context = await retrieveCandidates(look);
+      if (epoch === outfitRenderEpoch && card.isConnected) renderBoard(card, look, context);
+    };
+
+    root.querySelector('[data-new-capsule]')?.addEventListener('click', () => renderOutfits(true));
+    root.querySelectorAll('[data-refresh-board]').forEach(button => button.addEventListener('click', async () => {
+      button.disabled = true;
+      pinterest.clearCache();
+      renderOutfits(true);
+    }));
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < looks.length && epoch === outfitRenderEpoch) {
+        const look = looks[cursor++];
+        try { await buildOne(look); }
+        catch (error) {
+          const card = cardForLook(look.id);
+          if (card) card.querySelector('.vision-board-canvas').innerHTML = `<div class="recommendation-empty">Could not build this live board.<br>${escapeHtml(error.message)}</div>`;
+        }
+      }
+    };
+    await Promise.all([worker(), worker()]);
+  };
+
+  const renderOutfits = (forcePlan = false) => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
     const epoch = ++outfitRenderEpoch;
+    if (!ai.hasOpenRouter()) {
+      ai.refreshOpenRouterStatus().then(configured => {
+        if (configured && epoch === outfitRenderEpoch && location.hash.replace(/^#\/?/, '').startsWith('outfits')) renderOutfits(forcePlan);
+      });
+    }
     const itin = (trip.bundle && trip.bundle.itinerary && trip.bundle.itinerary.days) ? trip.bundle.itinerary : engine.buildItinerary(trip, profile);
     const { looks } = engine.buildOutfits(itin, profile, trip.season || 'summer', trip.destination, trip);
     const destination = trip.bundle?.destinationMeta?.name || DATA.destinations.find(d => d.key === trip.destination)?.name || titleCase(trip.destination);
     const styleKeywords = store.pinterest.extraKeywords.get();
     const user = me.email;
+    // Cached queries do not spend this allowance. Uncached retrieval is capped
+    // at two full-look searches per look and twelve requests per render.
+    pinterest.beginBatch(Math.min(12, Math.max(4, looks.length * 2)));
 
-    $('#outfits-source').innerHTML = `Real web outfit results are retrieved with several Pinterest-style intent searches, then ranked locally by text relevance, visual similarity, and your Save/Open/Zoom/Hide history. Your taste vectors stay in this browser. <button type="button" class="text-button" id="outfits-reset-taste">Reset learned taste</button>`;
+    if (ai.hasOpenRouter()) {
+      renderLiveVisionBoards({ me, trip, profile, itin, destination, epoch, forcePlan });
+      return;
+    }
+
+    $('#outfits-source').innerHTML = `Real full-outfit references are retrieved with a bounded destination-and-vibe search, then ranked locally by text relevance, visual similarity, and your Save/Open/Zoom/Hide history. Your taste vectors stay in this browser. <button type="button" class="text-button" id="outfits-reset-taste">Reset learned taste</button>`;
 
     const byDay = {};
     looks.forEach(l => { (byDay[l.dayIndex] ||= []).push(l); });
@@ -2319,7 +3324,7 @@ const ui = (() => {
         const confidence = Math.round(candidate.score * 100);
         return `<article class="ranked-pin" data-candidate-id="${escapeHtml(candidate.id)}" style="--rank:${index + 1}">
           <button type="button" class="pin-image-button" data-outfit-action="zoom" aria-label="Zoom outfit inspiration ${index + 1}">
-            <img src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(candidate.title)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
+            <img src="${escapeHtml(candidate.url)}" data-proxy-src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(candidate.title)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
             <span class="rank-badge">#${index + 1} · ${confidence}% match</span>
           </button>
           <div class="ranked-pin-meta">
@@ -2338,20 +3343,23 @@ const ui = (() => {
         if (!candidate) return;
         const capture = () => { outfitRecommender.captureVisual(img, candidate); updateRecommenderStats(); };
         if (img.complete && img.naturalWidth) capture(); else img.addEventListener('load', capture, { once: true });
-        img.addEventListener('error', () => img.closest('.ranked-pin')?.classList.add('image-failed'), { once: true });
+        img.addEventListener('error', () => {
+          if (!img.dataset.triedProxy && img.dataset.proxySrc) {
+            img.dataset.triedProxy = 'true';
+            img.src = img.dataset.proxySrc;
+            return;
+          }
+          img.closest('.ranked-pin')?.classList.add('image-failed');
+        });
       });
     };
 
     Object.values(byDay).flat().forEach((look, flatIndex) => {
       const lookIndex = byDay[look.dayIndex].indexOf(look); const lookId = `look-${look.dayIndex}-${lookIndex}`;
-      const base = pinterest.buildQuery(trip, profile, look);
       const pieces = look.items.map(it => itemQuery(it.value)).join(' ');
       const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
-      const queries = [
-        base,
-        `${destination} ${trip.season || ''} ${look.name} ${pieces} ${modest} street style full outfit ${styleKeywords}`,
-        `${destination} ${look.theme} travel capsule ${look.name} editorial outfit ${styleKeywords}`,
-      ].map(q => q.replace(/\s+/g, ' ').trim());
+      const itineraryDay = itin.days?.[Math.max(0, Number(look.dayIndex || 1) - 1)] || null;
+      const queries = pinterest.buildQueries(trip, profile, look, itineraryDay);
       const intent = `${destination} ${trip.season || ''} ${look.theme} ${look.name} ${look.why || ''} ${pieces} ${modest} ${styleKeywords}`;
       Promise.all(queries.map(query => pinterest.searchPins(query).then(pins => pins.slice(0, 12).map((pin, resultIndex) => ({
         id: outfitRecommender.idFor(pin.image), url: pin.image, query, title: pin.title || `${look.name} · ${look.theme}`, tags: [destination, trip.season, look.name, look.theme, styleKeywords].filter(Boolean), searchUrl: pin.sourceUrl || pinterest.searchURL(query), resultIndex,
@@ -2403,6 +3411,7 @@ const ui = (() => {
   const renderPacking = (req) => {
     const me = auth.current();
     const trip = activeTripFor(me.email);
+    const customized = Boolean(req);
     if (!req) {
       if (!trip) return;
       const defaults = { 'live-like-local':['walking-city'], 'iconic-first-visit':['walking-city','museums'],
@@ -2413,11 +3422,10 @@ const ui = (() => {
       $('#packing-form select[name="season"]').value = trip.season || 'summer';
       req = readPackingReq();
     }
-    // AI-generated packing (weather + profile aware) when present; else the demo engine (5 cities only).
+    // Prefer the saved live plan; the deterministic builder works for any destination.
     let result;
-    if (trip?.bundle?.packing?.lists?.length) result = trip.bundle.packing;
-    else if (DATA.destinations.find(d => d.key === trip?.destination)) result = engine.buildPacking(req, store.profile.load(me.email));
-    else result = { lists: [], reminders: [] };
+    if (!customized && trip?.bundle?.packing?.lists?.length) result = trip.bundle.packing;
+    else result = engine.buildPacking(req, store.profile.load(me.email));
     $('#packing-output').innerHTML = `
       <div class="pack-grid">
         ${result.lists.map(l => `
@@ -2454,9 +3462,16 @@ const ui = (() => {
     const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
     const f = $('#local-form');
     const ctx = { destination: trip.destination, category: f.category.value, mix: $$('[data-chips="local-mix"] input:checked').map(i => i.value) };
-    const places = (trip.bundle && trip.bundle.local && trip.bundle.local.length)
+    const basePlaces = (trip.bundle && trip.bundle.local && trip.bundle.local.length)
       ? trip.bundle.local
-      : (DATA.places[trip.destination] ? engine.buildLocal(ctx) : []);
+      : engine.buildLocal(ctx);
+    const selectedMix = new Set(ctx.mix || []);
+    const places = basePlaces.filter((place) => {
+      const category = place.cat || place.category || 'all';
+      const mix = place.mix || 'neighborhood';
+      return (ctx.category === 'all' || category === ctx.category)
+        && (!selectedMix.size || selectedMix.has(mix));
+    });
     $('#local-output').innerHTML = places.length ? `
       <div class="places">
         ${places.map(p => {
@@ -2469,8 +3484,8 @@ const ui = (() => {
             p.checkedAt ? `checked ${p.checkedAt}` : '',
           ].filter(Boolean);
           return `
-          <article class="place" data-mix="${escapeHtml(p.mix)}">
-            <header><h4>${escapeHtml(p.name)}</h4><span class="type">${escapeHtml(p.mix.replace('-', ' '))}</span></header>
+          <article class="place" data-mix="${escapeHtml(p.mix || 'neighborhood')}">
+            <header><h4>${escapeHtml(p.name)}</h4><span class="type">${escapeHtml(String(p.mix || 'neighborhood').replace('-', ' '))}</span></header>
             <p class="sub">${escapeHtml(p.sub)}</p>
             <p class="score">${escapeHtml(p.gemScore)}</p>
             ${p.reviewSummary ? `<p class="place-review">${escapeHtml(p.reviewSummary)}</p>` : ''}
@@ -2485,7 +3500,7 @@ const ui = (() => {
     const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
     const items = (trip.bundle && trip.bundle.expect && trip.bundle.expect.length)
       ? trip.bundle.expect
-      : (DATA.expectations[trip.destination] ? engine.buildExpect(trip.destination) : []);
+      : engine.buildExpect(trip.destination);
     $('#expect-kicker').textContent = destMetaFor(trip).culturalNote || '';
     $('#expect-output').innerHTML = `
       <div class="expect-grid">
@@ -2550,6 +3565,10 @@ const ui = (() => {
           ${e.dietAccuracy   ? `<span>Dietary: ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
           <span>${e.publicEntry ? 'Public' : 'Private'}</span>
         </div>
+        <div class="entry-actions">
+          <button type="button" class="text-button" data-journal-action="visibility" data-public="${String(Boolean(e.publicEntry))}" data-id="${escapeHtml(e.id)}">${e.publicEntry ? 'Make private' : 'Publish'}</button>
+          <button type="button" class="text-button" data-journal-action="remove" data-id="${escapeHtml(e.id)}">Remove entry</button>
+        </div>
       </li>`).join('');
   };
 
@@ -2609,17 +3628,39 @@ const ui = (() => {
   };
 
   return {
-    boot: () => {
+    boot: async () => {
       applyTheme();
       initAuth();
       initChat();
       initPublic();
       initApp();
       autosizeTextarea();
+      window.addEventListener('malem:sync-error', (event) => {
+        console.warn('Malem state sync failed:', event.detail);
+        flash('#global-status', 'Your latest change is saved on this device and will sync when the connection returns.');
+      });
+      window.addEventListener('pagehide', () => { auth.flush(); });
+      ai.refreshOpenRouterStatus().then(() => updateChatHint());
       window.addEventListener('hashchange', route);
+      try {
+        await auth.init();
+      } catch (error) {
+        flash('#auth-note', error.message || 'The account service is unavailable.');
+      }
       route();
     },
   };
 })();
 
-document.addEventListener('DOMContentLoaded', ui.boot);
+if (location.protocol === 'file:') {
+  const servedUrl = `http://localhost:8000/${location.hash || '#/chat'}`;
+  document.body.innerHTML = `<main class="server-required">
+    <p class="eyebrow">Server required</p>
+    <h1>Opening the live version of Malem…</h1>
+    <p>The secure OpenRouter workflow cannot run from a <code>file://</code> page.</p>
+    <p><a class="btn primary" href="${servedUrl}">Open Malem at localhost:8000</a></p>
+  </main>`;
+  location.replace(servedUrl);
+} else {
+  document.addEventListener('DOMContentLoaded', ui.boot);
+}
