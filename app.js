@@ -2940,7 +2940,6 @@ const ui = (() => {
       collapseButton.setAttribute('aria-expanded', String(!collapsed));
       collapseButton.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
       collapseButton.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
-      collapseButton.querySelector('span').textContent = collapsed ? '›' : '‹';
       try { localStorage.setItem('malem.sidebarCollapsed.v1', String(collapsed)); } catch {}
     };
     setSidebarCollapsed(localStorage.getItem('malem.sidebarCollapsed.v1') === 'true');
