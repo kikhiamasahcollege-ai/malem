@@ -128,6 +128,6 @@ Completed on 19 July 2026:
 - Desktop and 390 × 844 mobile layouts passed with working navigation and no
   console errors.
 - The 18-test release suite passed three consecutive runs.
-- Static assets now apply a CSP and other browser security headers, exclude
-  secrets/test data from Pages uploads, and document the required D1 `DB`
-  binding without embedding an account-specific resource id.
+- Static assets now apply a CSP and other browser security headers and exclude
+  secrets/test data from Pages uploads. The production D1 resource is bound as
+  `DB` in Cloudflare while its account-specific ID stays out of the public repo.

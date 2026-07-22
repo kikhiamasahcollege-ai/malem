@@ -20,7 +20,8 @@ Version 7 uses the same API contract in local development and production:
 # 0. Authenticate wrangler (once)
 wrangler login
 
-# 1. Create the database, then paste the printed database_id into wrangler.toml
+# 1. For a new Cloudflare account only, create the database and bind it to the
+#    Pages project as DB in Cloudflare > Workers & Pages > Settings > Bindings
 wrangler d1 create malem-db
 
 # 2. Create the tables (locally + remotely)
@@ -37,6 +38,10 @@ npx wrangler pages dev . --d1 DB=malem-db
 # 4. Ship it
 wrangler pages deploy
 ```
+
+The current production project already has `malem-db` configured as the `DB`
+binding in Cloudflare. Its account-specific ID is intentionally excluded from
+the public repository. Do not create a second database during routine deploys.
 
 Do not use `python3 -m http.server`: it has no identity, state, or upstream API
 routes. `server.mjs` persists development accounts in

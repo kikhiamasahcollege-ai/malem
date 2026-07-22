@@ -6,5 +6,6 @@ build/
 .env.*
 !.env.example
 .malem-data/
+.wrangler/
 .vscode/
 .idea/

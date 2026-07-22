@@ -64,16 +64,18 @@ instead of repeatedly retrying.
 There is no build step or package dependency. Copy `.env.example` into your
 preferred secret manager or export its variables before starting the server.
 
-For Cloudflare Pages, create and bind D1 before deployment:
+The production Cloudflare Pages project has the `malem-db` D1 database bound as
+`DB` in its Cloudflare settings. The account-specific resource ID is kept out of
+this public repository. For a new account or disaster-recovery copy:
 
 ```
 npx wrangler d1 create malem-db
-# Add the returned id to wrangler.toml, then:
+# Bind the returned database as DB in Pages settings, then:
 npx wrangler d1 execute malem-db --remote --file=./schema.sql
 npx wrangler pages secret put OPENROUTER_API_KEY
 ```
 
-The D1 binding must be named `DB`. The OpenRouter secret is optional. See
+The D1 binding must remain named `DB`. The OpenRouter secret is optional. See
 `docs/backend.md` for the complete local and deployed setup.
 
 ## Verify it
