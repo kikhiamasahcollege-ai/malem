@@ -40,8 +40,10 @@ wrangler pages deploy
 ```
 
 The current production project already has `malem-db` configured as the `DB`
-binding in Cloudflare. Its account-specific ID is intentionally excluded from
-the public repository. Do not create a second database during routine deploys.
+binding in `wrangler.toml`. Its resource ID is deployment metadata, not a
+credential, and keeping it in the checked-in configuration prevents deployments
+from dropping account storage. Do not create a second database during routine
+deploys.
 
 Do not use `python3 -m http.server`: it has no identity, state, or upstream API
 routes. `server.mjs` persists development accounts in

@@ -98,8 +98,8 @@ across browsers.
 - Run syntax checks, tests, browser smoke tests, and a final source/status audit.
 - The release passes only when there are no known functional blockers, no
   plaintext browser passwords, no unhandled console errors, and the documented
-  deployment configuration is complete apart from account-specific Cloudflare
-  resource identifiers.
+  deployment configuration is complete, with credentials stored only as
+  encrypted Cloudflare secrets.
 
 ## Acceptance criteria
 
@@ -127,7 +127,8 @@ Completed on 19 July 2026:
   session and state hydration also passed from a second browser origin.
 - Desktop and 390 × 844 mobile layouts passed with working navigation and no
   console errors.
-- The 18-test release suite passed three consecutive runs.
+- The expanded release suite passes in full.
 - Static assets now apply a CSP and other browser security headers and exclude
   secrets/test data from Pages uploads. The production D1 resource is bound as
-  `DB` in Cloudflare while its account-specific ID stays out of the public repo.
+  `DB` in `wrangler.toml`; its non-secret resource identifier is checked in so
+  deployments cannot silently drop the binding.

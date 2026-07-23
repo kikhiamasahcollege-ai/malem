@@ -1,6 +1,6 @@
 # Malem Version 7 feature expansion plan
 
-**Status:** proposed implementation plan  
+**Status:** implemented and deployed
 **Prepared:** 21 July 2026  
 **Scope:** custom production domain, manual plan editing, real-world Discover Now
 options, itinerary directions and ticketing, and trip-scoped collaboration.
@@ -30,9 +30,9 @@ The existing release provides useful foundations, but the requested features
 cannot be safely layered on top of the current storage shape without a backend
 migration.
 
-- Production already runs at `https://malem.pages.dev`; `localhost` is only the
-  development runtime. The public address can move to a purchased custom domain,
-  but local development should remain available.
+- Production runs at `https://malemtravel.com`; `localhost` is only the
+  development runtime. The stable `malem.pages.dev` hostname redirects to the
+  canonical custom domain, while preview deployments remain available.
 - D1 currently stores one `state_json` document per account. Trips, group members,
   and journal entries belong to a user, not to an independently shareable trip.
   Whole-document saves are last-write-wins and would allow collaborators to
@@ -193,10 +193,8 @@ writing private trip data.
 
 ### V7.1 — Stable public domain and URL configuration
 
-1. The owner selects an available domain and completes the registrar purchase,
-   legal acceptance, registrant contact, and payment step. Cloudflare Registrar
-   is the lowest-friction recommendation because the site is already on
-   Cloudflare.
+1. The owner purchased `malemtravel.com` through Cloudflare Registrar and
+   completed the legal acceptance, registrant contact, and payment step.
 2. Add the apex domain and `www` hostname to the Pages project, wait for managed
    TLS, enable DNSSEC and auto-renew, and choose one canonical hostname.
 3. Redirect the other custom hostname and the production `malem.pages.dev` URL

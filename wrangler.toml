@@ -3,10 +3,14 @@ name = "malem"
 pages_build_output_dir = "."
 compatibility_date = "2024-09-23"
 
-# Production requires the `malem-db` D1 database to be bound as `DB` in the
-# Cloudflare Pages project settings. Keep its account-specific resource ID out
-# of this public repository. For a private or local Wrangler configuration:
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "malem-db"
-# database_id = "YOUR_CLOUDFLARE_D1_DATABASE_ID"
+[vars]
+PUBLIC_BASE_URL = "https://malemtravel.com"
+OPENROUTER_APP_TITLE = "malem"
+
+# Cloudflare resource IDs are deployment identifiers, not credentials. Keeping
+# this binding in source control prevents Wrangler deployments from replacing
+# the production Pages configuration with an unbound Function.
+[[d1_databases]]
+binding = "DB"
+database_name = "malem-db"
+database_id = "65334172-4293-4ff6-92b5-36e8aec5d0c3"

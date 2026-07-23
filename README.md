@@ -4,7 +4,7 @@ A travel companion that understands who you are, gives you several ways to
 experience a destination, prepares you for the trip, and adapts your plans in
 real time.
 
-**Status:** Version 7 web release candidate.
+**Status:** Version 7 deployed at [malemtravel.com](https://malemtravel.com).
 
 ## What's here
 
@@ -65,8 +65,10 @@ There is no build step or package dependency. Copy `.env.example` into your
 preferred secret manager or export its variables before starting the server.
 
 The production Cloudflare Pages project has the `malem-db` D1 database bound as
-`DB` in its Cloudflare settings. The account-specific resource ID is kept out of
-this public repository. For a new account or disaster-recovery copy:
+`DB` in `wrangler.toml`; the database identifier is deployment metadata, not a
+credential. `PUBLIC_BASE_URL` is set to `https://malemtravel.com`; the stable
+`pages.dev` hostname and `www` alias redirect to that canonical origin. For a
+new account or disaster-recovery copy:
 
 ```
 npx wrangler d1 create malem-db
@@ -75,7 +77,8 @@ npx wrangler d1 execute malem-db --remote --file=./schema.sql
 npx wrangler pages secret put OPENROUTER_API_KEY
 ```
 
-The D1 binding must remain named `DB`. The OpenRouter secret is optional. See
+The D1 binding must remain named `DB`. If a replacement database is created,
+update its non-secret identifier in `wrangler.toml`. The OpenRouter secret is optional. See
 `docs/backend.md` for the complete local and deployed setup.
 
 ## Verify it

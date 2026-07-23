@@ -9,15 +9,30 @@ test('custom-domain middleware redirects only the stable production Pages hostna
 
   let response = await onRequest({
     request: new Request('https://malem.pages.dev/invite/example?from=sms'),
-    env: { PUBLIC_BASE_URL: 'https://malem.app' },
+    env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
     next,
   });
   assert.equal(response.status, 308);
-  assert.equal(response.headers.get('location'), 'https://malem.app/invite/example?from=sms');
+  assert.equal(response.headers.get('location'), 'https://malemtravel.com/invite/example?from=sms');
+
+  response = await onRequest({
+    request: new Request('https://www.malemtravel.com/#/itinerary'),
+    env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
+    next,
+  });
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get('location'), 'https://malemtravel.com/');
 
   response = await onRequest({
     request: new Request('https://6522b1e.malem.pages.dev/api/health'),
-    env: { PUBLIC_BASE_URL: 'https://malem.app' },
+    env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
+    next,
+  });
+  assert.equal(response.status, 200);
+
+  response = await onRequest({
+    request: new Request('https://untrusted.example/api/health'),
+    env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
     next,
   });
   assert.equal(response.status, 200);
