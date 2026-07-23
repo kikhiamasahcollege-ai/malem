@@ -7,6 +7,7 @@ import { createLocalAuthService } from '../lib/local-auth-service.mjs';
 import {
   applyTripOperations,
   makeMapsDirectionsUrl,
+  mergeGeneratedTrip,
   normalizeTripDocument,
 } from '../lib/trip-contract.mjs';
 
@@ -125,6 +126,49 @@ test('manual editor operations cover itinerary, packing, and Discover add/edit/r
   assert.equal(edited.discoverSessions[0].plans[0].steps[0].id, secondStep.id);
   assert.equal(edited.discoverSessions[0].plans[0].steps[1].title, 'Edited market walk');
   assert.equal(edited.discoverSessions[0].plans[0].steps[1].locked, true);
+});
+
+test('regeneration preserves locked human itinerary and packing edits for review', () => {
+  const current = normalizeTripDocument(legacyTrip(), { actor: 'owner-1' });
+  const day = current.bundle.itinerary.days[0];
+  const block = day.blocks[0];
+  const section = current.bundle.packing.lists[0];
+  const item = section.items[0];
+  const manual = applyTripOperations(current, [
+    {
+      type: 'itinerary.block.update',
+      dayId: day.id,
+      blockId: block.id,
+      patch: { title: 'Human-selected Duomo rooftop' },
+    },
+    {
+      type: 'packing.item.update',
+      sectionId: section.id,
+      itemId: item.id,
+      patch: { item: 'Broken-in walking shoes' },
+    },
+  ], { actor: 'owner-1' });
+  const regenerated = normalizeTripDocument({
+    ...legacyTrip(),
+    id: manual.id,
+    bundle: {
+      ...legacyTrip().bundle,
+      itinerary: {
+        respectedFromProfile: [],
+        days: [{ id: day.id, date: day.date, theme: 'New proposal', blocks: [{ title: 'Generated replacement', kind: 'sight' }] }],
+      },
+      packing: {
+        lists: [{ id: section.id, title: section.title, items: [{ item: 'Generated shoes' }] }],
+        reminders: [],
+      },
+    },
+  }, { actor: 'generator' });
+
+  const preview = mergeGeneratedTrip(manual, regenerated, { actor: 'generator' });
+  assert.ok(preview.carried.itinerary.includes(block.id));
+  assert.ok(preview.carried.packing.includes(item.id));
+  assert.ok(preview.document.bundle.itinerary.days[0].blocks.some((candidate) => candidate.title === 'Human-selected Duomo rooftop'));
+  assert.ok(preview.document.bundle.packing.lists[0].items.some((candidate) => candidate.item === 'Broken-in walking shoes'));
 });
 
 test('legacy state migrates idempotently into an owner-scoped trip document', async () => {
