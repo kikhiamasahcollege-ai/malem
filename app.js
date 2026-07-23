@@ -2507,6 +2507,7 @@ const ui = (() => {
   const parseIntList = (s) => parseList(s).map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0);
   const escapeAttr = escapeHtml;
   let editorSubmitHandler = null;
+  let editorInitialState = '';
   let lastTripMutation = null;
 
   const updateCanonicalMetadata = () => {
@@ -2546,14 +2547,20 @@ const ui = (() => {
     $('#trip-editor-submit').textContent = submitLabel;
     $('#trip-editor-note').textContent = '';
     editorSubmitHandler = onSubmit;
+    editorInitialState = JSON.stringify([...new FormData($('#trip-editor-form')).entries()]);
     dialog.showModal();
     setTimeout(() => dialog.querySelector('input, textarea, select')?.focus(), 0);
   };
 
-  const closeTripEditor = () => {
+  const closeTripEditor = ({ force = false } = {}) => {
     const dialog = $('#trip-editor');
+    const currentState = JSON.stringify([...new FormData($('#trip-editor-form')).entries()]);
+    if (!force && dialog?.open && currentState !== editorInitialState
+      && !confirm('Discard the unsaved changes in this editor?')) return false;
     editorSubmitHandler = null;
+    editorInitialState = '';
     if (dialog?.open) dialog.close();
+    return true;
   };
 
   const commitTripOperations = async (tripId, operations) => {
@@ -3444,7 +3451,7 @@ const ui = (() => {
       try {
         const values = Object.fromEntries(new FormData(event.currentTarget));
         await editorSubmitHandler(values, event.currentTarget);
-        closeTripEditor();
+        closeTripEditor({ force: true });
       } catch (error) {
         $('#trip-editor-note').textContent = String(error.message || error).slice(0, 240);
       } finally {
@@ -3534,7 +3541,13 @@ const ui = (() => {
     }
     const root = $('#itinerary-output');
     const ticketLabel = (booking) => {
+      if (booking?.required !== 'yes' || !safeExternalUrl(booking.sourceUrl)
+        || !booking.priceCheckedAt) return '';
       if (!booking?.price?.currency || !Number.isFinite(Number(booking.price.amount))) return '';
+      const checkedAt = Date.parse(booking.priceCheckedAt);
+      const fresh = Number.isFinite(checkedAt)
+        && Date.now() - checkedAt <= 30 * 24 * 60 * 60 * 1000;
+      if (!fresh) return 'Check current price';
       try {
         const price = new Intl.NumberFormat(undefined, { style: 'currency', currency: booking.price.currency }).format(Number(booking.price.amount));
         return `${booking.price.qualifier === 'from' ? 'From ' : ''}${price}`;
@@ -3575,6 +3588,7 @@ const ui = (() => {
               ${b.respects ? `<div class="respects">${b.respects.map(r => `<span>${escapeHtml(r)}</span>`).join('')}</div>` : ''}
               ${access.editable ? `<div class="edit-actions">
                 <button type="button" class="edit-action" data-itin-action="edit" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}">Edit</button>
+                <button type="button" class="edit-action" data-itin-action="duplicate" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}">Duplicate</button>
                 <button type="button" class="edit-action" data-itin-action="move-up" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}"${blockIndex === 0 ? ' disabled' : ''}>↑ Move</button>
                 <button type="button" class="edit-action" data-itin-action="move-down" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}"${blockIndex === day.blocks.length - 1 ? ' disabled' : ''}>↓ Move</button>
                 <button type="button" class="edit-action danger" data-itin-action="remove" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}">Remove</button>
@@ -3683,6 +3697,24 @@ const ui = (() => {
       if (action === 'remove' && day && block) {
         if (!confirm(`Remove “${block.title}” from this trip? You can undo immediately after saving.`)) return;
         await commitTripOperations(trip.id, [{ type: 'itinerary.block.remove', dayId: day.id, blockId: block.id }]);
+        return;
+      }
+      if (action === 'duplicate' && day && block) {
+        await commitTripOperations(trip.id, [{
+          type: 'itinerary.block.add',
+          dayId: day.id,
+          afterId: block.id,
+          block: {
+            time: block.time,
+            title: `${block.title} (copy)`,
+            duration: block.duration,
+            kind: block.kind,
+            notes: block.notes,
+            respects: block.respects,
+            place: block.place,
+            booking: block.booking,
+          },
+        }]);
         return;
       }
       if ((action === 'move-up' || action === 'move-down') && day && block) {
@@ -4058,11 +4090,13 @@ const ui = (() => {
     root.innerHTML = `
       ${!access.editable ? '<p class="read-only-note">Passenger princess access is view-only. You can still check the shared packing guide.</p>' : ''}
       <div class="pack-grid">
-        ${result.lists.map(l => `
+        ${result.lists.map((l, sectionIndex) => `
           <section class="pack-list"${l.tone ? ` data-tone="${l.tone}"` : ''}>
             <h4>${escapeHtml(l.title)} <span class="count">${l.items.length}</span></h4>
             ${access.editable ? `<div class="pack-list-actions">
               <button type="button" class="edit-action" data-pack-action="edit-section" data-section-id="${escapeAttr(l.id)}">Edit section</button>
+              <button type="button" class="edit-action" data-pack-action="move-section-up" data-section-id="${escapeAttr(l.id)}"${sectionIndex === 0 ? ' disabled' : ''}>↑ Section</button>
+              <button type="button" class="edit-action" data-pack-action="move-section-down" data-section-id="${escapeAttr(l.id)}"${sectionIndex === result.lists.length - 1 ? ' disabled' : ''}>↓ Section</button>
               <button type="button" class="edit-action" data-pack-action="add-item" data-section-id="${escapeAttr(l.id)}">＋ Add item</button>
               <button type="button" class="edit-action danger" data-pack-action="remove-section" data-section-id="${escapeAttr(l.id)}">Remove section</button>
             </div>` : ''}
@@ -4144,6 +4178,16 @@ const ui = (() => {
         if (confirm(`Remove “${section.title}” and its ${section.items.length} item${section.items.length === 1 ? '' : 's'}?`)) {
           await commitTripOperations(trip.id, [{ type: 'packing.section.remove', sectionId: section.id }]);
         }
+        return;
+      }
+      if ((action === 'move-section-up' || action === 'move-section-down') && section) {
+        const index = result.lists.findIndex((candidate) => candidate.id === section.id);
+        const afterId = action === 'move-section-up'
+          ? (index > 1 ? result.lists[index - 2].id : '')
+          : result.lists[index + 1]?.id;
+        await commitTripOperations(trip.id, [{
+          type: 'packing.section.move', sectionId: section.id, afterId,
+        }]);
         return;
       }
       if (action === 'remove-item' && item) {

@@ -10,6 +10,9 @@ const ALLOWED_MODELS = new Set([
   'openai/gpt-4.1-mini',
   'qwen/qwen3-32b',
 ]);
+const rateBuckets = new Map();
+const RATE_WINDOW_MS = 5 * 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 18;
 
 export const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -27,3 +30,22 @@ export const headersFor = (request, env) => ({
 });
 
 export const requireKey = (env) => Boolean(env.OPENROUTER_API_KEY);
+
+export const withinRequestLimit = (request) => {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const now = Date.now();
+  const current = rateBuckets.get(ip);
+  if (!current || now - current.startedAt >= RATE_WINDOW_MS) {
+    rateBuckets.set(ip, { startedAt: now, count: 1 });
+    return true;
+  }
+  current.count += 1;
+  if (rateBuckets.size > 500) {
+    for (const [key, bucket] of rateBuckets) {
+      if (now - bucket.startedAt >= RATE_WINDOW_MS) rateBuckets.delete(key);
+    }
+  }
+  return current.count <= MAX_REQUESTS_PER_WINDOW;
+};
+
+export const __test = { RATE_WINDOW_MS, MAX_REQUESTS_PER_WINDOW };

@@ -77,6 +77,56 @@ test('Trip Document V2 normalizes stable editable IDs and safe Maps directions',
   assert.equal(edited.bundle.itinerary.days[0].blocks[0].origin, 'manual');
 });
 
+test('manual editor operations cover itinerary, packing, and Discover add/edit/reorder flows', () => {
+  const legacy = legacyTrip();
+  const base = normalizeTripDocument({
+    ...legacy,
+    bundle: {
+      ...legacy.bundle,
+      packing: {
+        lists: [
+          { title: 'First', items: [{ item: 'A' }, { item: 'B' }] },
+          { title: 'Second', items: [{ item: 'C' }] },
+        ],
+        reminders: [],
+      },
+    },
+    discoverSessions: [{
+      context: { destination: 'milan', hours: 3 },
+      plans: [{
+        title: 'Local loop', badge: 'Nearby', why: 'Compact',
+        steps: [
+          { title: 'Market', options: [{ name: 'Mercato Centrale', sourceUrl: 'https://example.test/market' }] },
+          { title: 'Coffee', options: [{ name: 'Cafe', sourceUrl: 'https://example.test/cafe' }] },
+        ],
+      }],
+    }],
+  }, { actor: 'owner-1' });
+  const day = base.bundle.itinerary.days[0];
+  const originalBlock = day.blocks[0];
+  const firstSection = base.bundle.packing.lists[0];
+  const secondSection = base.bundle.packing.lists[1];
+  const session = base.discoverSessions[0];
+  const plan = session.plans[0];
+  const firstStep = plan.steps[0];
+  const secondStep = plan.steps[1];
+
+  const edited = applyTripOperations(base, [
+    { type: 'itinerary.block.add', dayId: day.id, afterId: originalBlock.id, block: { title: 'Duplicate-ready stop' } },
+    { type: 'packing.section.move', sectionId: secondSection.id, afterId: '' },
+    { type: 'packing.item.move', fromSectionId: firstSection.id, toSectionId: secondSection.id, itemId: firstSection.items[0].id, afterId: '' },
+    { type: 'discover.step.move', sessionId: session.id, planId: plan.id, stepId: secondStep.id, afterId: '' },
+    { type: 'discover.step.update', sessionId: session.id, planId: plan.id, stepId: firstStep.id, patch: { title: 'Edited market walk' } },
+  ], { actor: 'owner-1' });
+
+  assert.equal(edited.bundle.itinerary.days[0].blocks[1].title, 'Duplicate-ready stop');
+  assert.equal(edited.bundle.packing.lists[0].id, secondSection.id);
+  assert.equal(edited.bundle.packing.lists[0].items[0].item, 'A');
+  assert.equal(edited.discoverSessions[0].plans[0].steps[0].id, secondStep.id);
+  assert.equal(edited.discoverSessions[0].plans[0].steps[1].title, 'Edited market walk');
+  assert.equal(edited.discoverSessions[0].plans[0].steps[1].locked, true);
+});
+
 test('legacy state migrates idempotently into an owner-scoped trip document', async () => {
   const { service, dataFile } = await setup();
   const cookie = await signup(service, 'Owner', 'owner@example.test');

@@ -135,8 +135,8 @@ const validateState = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
-const enforceRateLimit = (request, scope = 'auth', limit = 12) => {
-  const key = `${scope}:${request.headers.get('cf-connecting-ip') || 'unknown'}`;
+const enforceRateLimit = (request, scope = 'auth', limit = 12, subject = '') => {
+  const key = `${scope}:${subject}:${request.headers.get('cf-connecting-ip') || 'unknown'}`;
   const now = Date.now();
   const current = rateWindows.get(key);
   if (!current || now - current.startedAt >= 60_000) {
@@ -444,6 +444,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'document' && parts.length === 3 && method === 'PATCH') {
     await requireTrip(env, tripId, auth.user.id, canEditTrip, 'This trip is read-only for your role.');
+    enforceRateLimit(request, 'trip mutation', 60, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_STATE_BYTES);
     const clientMutationId = String(body.clientMutationId || '').slice(0, 160);
     if (!clientMutationId) return json({ error: 'clientMutationId is required.' }, 400);
@@ -514,6 +515,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'undo' && parts.length === 3 && method === 'POST') {
     await requireTrip(env, tripId, auth.user.id, canEditTrip, 'This trip is read-only for your role.');
+    enforceRateLimit(request, 'trip mutation', 60, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_AUTH_BYTES);
     const original = await env.DB.prepare(
       `SELECT id, result_revision, before_json FROM trip_mutations
@@ -601,7 +603,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'invites' && parts.length === 3 && method === 'POST') {
     await requireTrip(env, tripId, auth.user.id, canManageTrip, 'Only the trip owner can create invitations.');
-    enforceRateLimit(request, 'invite creation', 8);
+    enforceRateLimit(request, 'invite creation', 8, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_AUTH_BYTES);
     const role = body.role === TRIP_ROLES.collaborator ? TRIP_ROLES.collaborator : TRIP_ROLES.viewer;
     const expiresInDays = Math.min(30, Math.max(1, Number(body.expiresInDays) || 7));
@@ -632,6 +634,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'vibes' && parts[3] === 'vote' && method === 'POST') {
     await requireTrip(env, tripId, auth.user.id, canVoteOnTrip, 'Passenger princess members cannot vote.');
+    enforceRateLimit(request, 'trip vote', 30, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_AUTH_BYTES);
     const primaryVibe = String(body.primaryVibe || '').trim().slice(0, 80);
     const secondaryVibe = String(body.secondaryVibe || '').trim().slice(0, 80);
@@ -651,6 +654,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'itinerary' && parts[3] && parts[4] === 'vote' && method === 'POST') {
     await requireTrip(env, tripId, auth.user.id, canVoteOnTrip, 'Passenger princess members cannot vote.');
+    enforceRateLimit(request, 'trip vote', 30, `${auth.user.id}:${tripId}`);
     const payload = await loadTripPayload(env, tripId, auth.user.id, { includeCollaboration: false });
     const exists = payload?.trip?.bundle?.itinerary?.days?.some((day) => day.blocks?.some((block) => block.id === parts[3]));
     if (!exists) return json({ error: 'Itinerary item not found.' }, 404);
@@ -678,7 +682,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
 
   if (parts[2] === 'discover' && parts.length === 3 && method === 'POST') {
     await requireTrip(env, tripId, auth.user.id, canEditTrip, 'This trip is read-only for your role.');
-    enforceRateLimit(request, 'place discovery', 6);
+    enforceRateLimit(request, 'place discovery', 6, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_AUTH_BYTES);
     const trip = await env.DB.prepare('SELECT destination FROM trips WHERE id = ?').bind(tripId).first();
     const stateRow = await env.DB.prepare('SELECT state_json FROM user_state WHERE user_id = ?').bind(auth.user.id).first();

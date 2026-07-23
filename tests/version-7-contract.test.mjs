@@ -39,6 +39,22 @@ test('degraded mode keeps trip planning and destination panels functional', asyn
   assert.match(app, /type: 'packing\.replace'/);
   assert.match(app, /Saved on this device\. Malem will retry/);
   assert.match(app, /const selectedMix = new Set\(ctx\.mix/);
+  assert.match(app, /data-itin-action="duplicate"/);
+  assert.match(app, /data-pack-action="move-section-up"/);
+  assert.match(app, /Check current price/);
+  assert.match(app, /Discard the unsaved changes in this editor/);
+});
+
+test('OpenRouter proxy caps request frequency, body size, and tool surface', async () => {
+  const [shared, proxy] = await Promise.all([
+    read('../functions/api/openrouter/_shared.js'),
+    read('../functions/api/openrouter/chat/completions.js'),
+  ]);
+  assert.match(shared, /MAX_REQUESTS_PER_WINDOW = 18/);
+  assert.match(proxy, /MAX_REQUEST_BYTES = 160_000/);
+  assert.match(proxy, /MAX_MESSAGE_BYTES = 120_000/);
+  assert.match(proxy, /tool\?\.type !== 'web_search'/);
+  assert.match(proxy, /planning request cap/i);
 });
 
 test('production markup requires release-grade passwords and has no nested labels', async () => {
