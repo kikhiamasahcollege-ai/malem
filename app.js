@@ -2509,6 +2509,14 @@ const ui = (() => {
   let editorSubmitHandler = null;
   let lastTripMutation = null;
 
+  const updateCanonicalMetadata = () => {
+    const canonical = `${location.origin}${location.pathname || '/'}`;
+    const canonicalLink = $('#canonical-url');
+    const openGraphUrl = $('#og-url');
+    if (canonicalLink) canonicalLink.href = canonical;
+    if (openGraphUrl) openGraphUrl.content = canonical;
+  };
+
   const fieldMarkup = (field) => {
     const value = field.value ?? '';
     const common = `name="${escapeAttr(field.name)}"${field.required ? ' required' : ''}${field.placeholder ? ` placeholder="${escapeAttr(field.placeholder)}"` : ''}`;
@@ -4575,6 +4583,7 @@ const ui = (() => {
 
   return {
     boot: async () => {
+      updateCanonicalMetadata();
       applyTheme();
       initAuth();
       initChat();
