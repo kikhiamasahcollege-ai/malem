@@ -36,7 +36,8 @@ node server.mjs
 npx wrangler pages dev . --d1 DB=malem-db
 
 # 4. Ship it
-wrangler pages deploy
+node scripts/build.mjs
+wrangler pages deploy dist
 ```
 
 The current production project already has `malem-db` configured as the `DB`

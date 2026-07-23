@@ -68,10 +68,19 @@ test('local and Cloudflare servers expose the complete identity/state contract',
 });
 
 test('deployment excludes secrets, development data, and test-only files from static assets', async () => {
-  const ignored = await read('../.assetsignore');
+  const [ignored, build, wrangler] = await Promise.all([
+    read('../.assetsignore'),
+    read('../scripts/build.mjs'),
+    read('../wrangler.toml'),
+  ]);
   for (const path of ['.env', '.malem-data/', 'server.mjs', 'lib/local-auth-service.mjs', 'lib/place-service.mjs', 'migrations/', 'tests/', 'docs/', 'schema.sql']) {
     assert.match(ignored, new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+    assert.doesNotMatch(build, new RegExp(`['"]${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
   }
+  for (const asset of ['index.html', 'styles.css', 'app.js', 'privacy.html', 'terms.html', '_headers']) {
+    assert.match(build, new RegExp(`'${asset.replace('.', '\\.')}'`));
+  }
+  assert.match(wrangler, /pages_build_output_dir = "dist"/);
 });
 
 test('deployment applies browser security headers', async () => {

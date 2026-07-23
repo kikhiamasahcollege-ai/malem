@@ -61,8 +61,11 @@ proxy only when a remote host blocks the browser. When limits or upstream
 providers are unavailable, the UI uses cached results or a source-search link
 instead of repeatedly retrying.
 
-There is no build step or package dependency. Copy `.env.example` into your
-preferred secret manager or export its variables before starting the server.
+There is no package dependency. `node scripts/build.mjs` copies an explicit
+allowlist of browser assets into `dist/` for Cloudflare Pages, preventing
+repository-only tests, docs, schemas, and server sources from becoming public.
+Copy `.env.example` into your preferred secret manager or export its variables
+before starting the local server.
 
 The production Cloudflare Pages project has the `malem-db` D1 database bound as
 `DB` in `wrangler.toml`; the database identifier is deployment metadata, not a
@@ -84,6 +87,7 @@ update its non-secret identifier in `wrangler.toml`. The OpenRouter secret is op
 ## Verify it
 
 ```
+node scripts/build.mjs
 node --check app.js
 node --check server.mjs
 node --test tests/*.test.mjs
