@@ -77,7 +77,8 @@ test('root middleware blocks repository-only files even if an older Pages asset 
     '/wrangler.toml',
     '/docs/backend.md',
     '/tests/auth-api.test.mjs',
-    '/lib/trip-contract.mjs',
+    '/lib/local-auth-service.mjs',
+    '/lib/place-service.mjs',
     '/migrations/0002_trip_collaboration.sql',
     '/scripts/build.mjs',
     '/.env',
@@ -99,11 +100,18 @@ test('root middleware blocks repository-only files even if an older Pages asset 
   });
   assert.equal(publicResponse.status, 200);
 
+  const browserModuleResponse = await onRequest({
+    request: new Request('https://malemtravel.com/lib/trip-contract.mjs'),
+    env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
+    next,
+  });
+  assert.equal(browserModuleResponse.status, 200);
+
   const wellKnownResponse = await onRequest({
     request: new Request('https://malemtravel.com/.well-known/acme-challenge/example'),
     env: { PUBLIC_BASE_URL: 'https://malemtravel.com' },
     next,
   });
   assert.equal(wellKnownResponse.status, 200);
-  assert.equal(nextCalls, 2);
+  assert.equal(nextCalls, 3);
 });

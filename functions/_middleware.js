@@ -5,11 +5,12 @@ const repositoryOnlyPaths = new Set([
   '/server.mjs',
   '/wrangler.toml',
   '/_headers',
+  '/lib/local-auth-service.mjs',
+  '/lib/place-service.mjs',
 ]);
 const repositoryOnlyPrefixes = [
   '/docs/',
   '/tests/',
-  '/lib/',
   '/migrations/',
   '/scripts/',
 ];

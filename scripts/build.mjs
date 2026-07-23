@@ -14,12 +14,16 @@ export const PUBLIC_ASSETS = [
   'app.js',
   'privacy.html',
   'terms.html',
+  'lib/trip-contract.mjs',
   '_headers',
 ];
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-await Promise.all(PUBLIC_ASSETS.map((asset) =>
-  copyFile(resolve(root, asset), resolve(output, asset))));
+await Promise.all(PUBLIC_ASSETS.map(async (asset) => {
+  const destination = resolve(output, asset);
+  await mkdir(dirname(destination), { recursive: true });
+  await copyFile(resolve(root, asset), destination);
+}));
 
 console.log(`Built ${PUBLIC_ASSETS.length} public assets in ${output}`);

@@ -62,8 +62,9 @@ providers are unavailable, the UI uses cached results or a source-search link
 instead of repeatedly retrying.
 
 There is no package dependency. `node scripts/build.mjs` copies an explicit
-allowlist of browser assets into `dist/` for Cloudflare Pages, preventing
-repository-only tests, docs, schemas, and server sources from becoming public.
+allowlist of browser assets and the shared browser trip-contract module into
+`dist/` for Cloudflare Pages, preventing repository-only tests, docs, schemas,
+and server sources from becoming public.
 Copy `.env.example` into your preferred secret manager or export its variables
 before starting the local server.
 

@@ -77,7 +77,7 @@ test('deployment excludes secrets, development data, and test-only files from st
     assert.match(ignored, new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
     assert.doesNotMatch(build, new RegExp(`['"]${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
   }
-  for (const asset of ['index.html', 'styles.css', 'app.js', 'privacy.html', 'terms.html', '_headers']) {
+  for (const asset of ['index.html', 'styles.css', 'app.js', 'privacy.html', 'terms.html', 'lib/trip-contract.mjs', '_headers']) {
     assert.match(build, new RegExp(`'${asset.replace('.', '\\.')}'`));
   }
   assert.match(wrangler, /pages_build_output_dir = "dist"/);
