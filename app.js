@@ -1,5 +1,12 @@
 /* malem — dependency-free. Modules: store, data, engine, auth, parser, ai, ui. */
 
+import {
+  applyTripOperations,
+  makeMapsDirectionsUrl,
+  mergeGeneratedTrip,
+  normalizeTripDocument,
+} from './lib/trip-contract.mjs';
+
 // ---------- store ----------
 const store = (() => {
   const K = {
@@ -11,6 +18,7 @@ const store = (() => {
     legacyTrip: (e) => `malem.trip.v1.${e}`,         // OLD: single trip
     group:    (e) => `malem.group.v1.${e}`,
     journal:  (e) => `malem.journal.v1.${e}`,
+    tripQueue:(e) => `malem.tripMutations.v2.${e}`,
     theme:    'malem.theme.v1',
     openaiKey:    'malem.openaiKey.v1',
     openaiModel:  'malem.openaiModel.v1',
@@ -83,6 +91,11 @@ const store = (() => {
     remove: (e, id) => {
       const arr = readJSON(K.trips(e), []).filter(t => t.id !== id);
       localStorage.setItem(K.trips(e), JSON.stringify(arr)); notifySync(e);
+    },
+    hydrate: (e, nextTrips) => {
+      suppressSync = true;
+      try { localStorage.setItem(K.trips(e), JSON.stringify(Array.isArray(nextTrips) ? nextTrips : [])); }
+      finally { suppressSync = false; }
     },
     // Review evidence is generated per place and saved with a trip so it can
     // be shown offline. This deliberately removes only review-derived fields,
@@ -189,7 +202,7 @@ const store = (() => {
   const clearUserState = (email) => {
     suppressSync = true;
     try {
-      [K.profile(email), K.trips(email), K.activeTrip(email), K.legacyTrip(email), K.group(email), K.journal(email)]
+      [K.profile(email), K.trips(email), K.activeTrip(email), K.legacyTrip(email), K.group(email), K.journal(email), K.tripQueue(email)]
         .forEach((key) => localStorage.removeItem(key));
     } finally {
       suppressSync = false;
@@ -213,6 +226,11 @@ const store = (() => {
       load: (e) => readJSON(K.journal(e), []),
       save: (e, j) => { localStorage.setItem(K.journal(e), JSON.stringify(j)); notifySync(e); },
       clear: (e) => { localStorage.removeItem(K.journal(e)); notifySync(e); },
+    },
+    tripQueue: {
+      load: (e) => readJSON(K.tripQueue(e), []),
+      save: (e, value) => localStorage.setItem(K.tripQueue(e), JSON.stringify(Array.isArray(value) ? value.slice(-200) : [])),
+      clear: (e) => localStorage.removeItem(K.tripQueue(e)),
     },
     cloud: {
       connect: (email) => { activeEmail = email || ''; },
@@ -933,7 +951,7 @@ Return STRICT JSON ONLY — no prose, no code fences, no citation text — match
     "respectedFromProfile": ["short phrases naming which profile constraints shaped the plan"],
     "days": [
       { "date": "YYYY-MM-DD or empty string", "theme": "short day theme",
-        "blocks": [ { "time": "HH:MM", "title": "Specific, verified place or activity", "duration": "e.g. 90 min", "kind": "meal|sight|activity|rest|transit|shopping", "respects": ["profile fields this honored, optional"], "businessSize": "small|local-institution|large|public|unknown", "rating": number or null, "reviewCount": integer or null, "reviewSummary": "short paraphrase of recent review themes or empty", "sourceUrl": "current official or reputable listing URL", "reviewSourceUrl": "current review/listing URL or empty", "checkedAt": "YYYY-MM-DD" } ] }
+        "blocks": [ { "time": "HH:MM", "title": "Specific, verified place or activity", "duration": "e.g. 90 min", "kind": "meal|sight|activity|rest|transit|shopping", "respects": ["profile fields this honored, optional"], "businessSize": "small|local-institution|large|public|unknown", "place": { "name": "verified place name", "address": "current street address or empty", "latitude": number or null, "longitude": number or null, "providerPlaceId": "Google place ID or empty", "description": "short factual description", "rating": number or null, "reviewCount": integer or null, "reviewSummary": "short paraphrase of recent review themes or empty", "sourceUrl": "current official or reputable listing URL", "reviewsUrl": "current review/listing URL or empty", "officialUrl": "official site or empty", "checkedAt": "YYYY-MM-DD" }, "booking": { "required": "yes|no|unknown", "officialBookingUrl": "official ticket URL only when required=yes, otherwise empty", "price": { "amount": number, "currency": "ISO 4217", "qualifier": "from|standard" } or null, "priceCheckedAt": "YYYY-MM-DD or empty", "sourceUrl": "price/booking evidence URL or empty" } } ] }
     ]
   },
   "expect": [ { "key": "etiquette|clothing|tipping|prayer|driving|transit|scams|safety|accessibility|phrases|hours|photos|difference", "label": "Human label", "text": "1-2 practical sentences", "confidence": "high|med", "updated": "YYYY-MM", "source": "web or local knowledge" } ],
@@ -950,9 +968,9 @@ Return STRICT JSON ONLY — no prose, no code fences, no citation text — match
     "reminders": [ {"when":"Two weeks before","text":"..."}, {"when":"Three days before","text":"..."}, {"when":"Night before","text":"..."}, {"when":"Morning of","text":"..."} ]
   }
 }
-Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cover all 13 keys. "local" MUST include at least 10 places and be ordered with small businesses first. Weather must visibly shape clothing, packing, and outdoor timing. Every non-transit itinerary place and every local entry needs a current sourceUrl and checkedAt date. Never invent profile constraints the traveler did not state.`;
+Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cover all 13 keys. "local" MUST include at least 10 places and be ordered with small businesses first. Weather must visibly shape clothing, packing, and outdoor timing. Every non-transit itinerary place and every local entry needs a current sourceUrl and checkedAt date. Set booking.required to "yes" only when current evidence shows advance or paid admission is actually needed. When required=yes, provide the official booking URL, current displayed price, currency, price check date, and evidence URL; never guess a price. Use "unknown" and omit price/link when evidence is unavailable. Never invent profile constraints the traveler did not state.`;
 
-  const buildGenUser = (trip, profile, weatherObj) => {
+  const buildGenUser = (trip, profile, weatherObj, collaboration = null) => {
     const wxLine = (weatherObj && weatherObj.days && weatherObj.days.length)
       ? `${weather.describe(weatherObj)}\nDaily: ${weatherObj.days.map(d => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C ${d.summary} ${d.precip ?? 0}% rain`).join('; ')}`
       : 'No live forecast available — use seasonal norms.';
@@ -962,13 +980,14 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
       `Live weather (Open-Meteo): ${wxLine}`,
       `Research date: ${new Date().toISOString().slice(0, 10)}. Search for current openings, official sites, recent reviews, closures, and neighborhood small businesses now.`,
       `Traveler profile — honor ALL of this and reference it in "respectedFromProfile":\n${JSON.stringify(profile)}`,
+      ...(collaboration ? [`Shared collaboration context — use aggregate preferences only, preserve every locked item, and do not infer private traits:\n${JSON.stringify(collaboration)}`] : []),
       `Now produce the complete JSON bundle for this trip.`,
     ].join('\n\n');
   };
 
   // Claude: web-grounded generation via the server-side web_search tool.
-  const generateViaClaude = (trip, profile, weatherObj) =>
-    claudeJSON({ system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj), tools: [WEB_SEARCH_TOOL], maxTokens: 16000 });
+  const generateViaClaude = (trip, profile, weatherObj, collaboration) =>
+    claudeJSON({ system: GEN_SYSTEM, user: buildGenUser(trip, profile, weatherObj, collaboration), tools: [WEB_SEARCH_TOOL], maxTokens: 16000 });
 
   const responseOutputText = (data) => (data?.output || [])
     .filter(item => item.type === 'message')
@@ -979,7 +998,7 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
 
   // OpenAI: Responses API with the current web_search tool, so place/review
   // research is live rather than limited to the model's knowledge cutoff.
-  const generateViaOpenAI = async (trip, profile, weatherObj) => {
+  const generateViaOpenAI = async (trip, profile, weatherObj, collaboration) => {
     const key = store.ai.openaiKey.get();
     if (!key) throw new Error('No OpenAI key set.');
     const configured = store.ai.openaiModel.get();
@@ -990,7 +1009,7 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
       body: JSON.stringify({
         model,
         instructions: GEN_SYSTEM,
-        input: buildGenUser(trip, profile, weatherObj),
+        input: buildGenUser(trip, profile, weatherObj, collaboration),
         tools: [{ type: 'web_search', search_context_size: 'medium' }],
         tool_choice: 'auto',
         max_output_tokens: 12000,
@@ -1020,8 +1039,8 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
     'You are malem\'s final itinerary-presentation stage. You receive structured, web-grounded evidence from earlier stages. Use only that evidence for factual place, rating, review, and URL claims; leave unavailable facts null or empty. Do not browse and do not rely on model memory for new factual claims.'
   );
 
-  const buildPipelineContext = (trip, profile, weatherObj, variationNonce) =>
-    `${buildGenUser(trip, profile, weatherObj)}\n\nVariation nonce for this run: ${variationNonce}.`;
+  const buildPipelineContext = (trip, profile, weatherObj, variationNonce, collaboration) =>
+    `${buildGenUser(trip, profile, weatherObj, collaboration)}\n\nVariation nonce for this run: ${variationNonce}.`;
   const validateTripBundle = (bundle, expectedDays) => {
     const errors = [];
     if (!bundle?.destinationMeta?.name) errors.push('destinationMeta.name is missing');
@@ -1047,11 +1066,11 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
   // Four intentionally isolated model calls. Research and review calls have
   // bounded server-side search; selection and presentation only consume the
   // structured evidence returned by earlier stages.
-  const generateViaOpenRouter = async (trip, profile, weatherObj) => {
+  const generateViaOpenRouter = async (trip, profile, weatherObj, collaboration) => {
     const models = store.ai.pipeline.get();
     const runId = `trip_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const variationNonce = crypto.randomUUID();
-    const context = buildPipelineContext(trip, profile, weatherObj, variationNonce);
+    const context = buildPipelineContext(trip, profile, weatherObj, variationNonce, collaboration);
     const traceStages = [];
     const trace = (result) => {
       traceStages.push({ ...result.meta, response: result.json });
@@ -1265,11 +1284,11 @@ Return STRICT JSON only:
     };
   };
 
-  const generateTrip = async (trip, profile, weatherObj) => {
+  const generateTrip = async (trip, profile, weatherObj, collaboration = null) => {
     const p = provider();
-    if (p === 'openrouter') return await generateViaOpenRouter(trip, profile, weatherObj);
-    if (p === 'claude') return { bundle: await generateViaClaude(trip, profile, weatherObj), llmRun: null };
-    if (p === 'openai') return { bundle: await generateViaOpenAI(trip, profile, weatherObj), llmRun: null };
+    if (p === 'openrouter') return await generateViaOpenRouter(trip, profile, weatherObj, collaboration);
+    if (p === 'claude') return { bundle: await generateViaClaude(trip, profile, weatherObj, collaboration), llmRun: null };
+    if (p === 'openai') return { bundle: await generateViaOpenAI(trip, profile, weatherObj, collaboration), llmRun: null };
     return null;
   };
 
@@ -2121,6 +2140,7 @@ const auth = (() => {
   let syncTimer = null;
   let syncChain = Promise.resolve();
   let stateDirty = false;
+  const tripRecords = new Map();
 
   const request = async (path, options = {}) => {
     let response;
@@ -2141,9 +2161,97 @@ const auth = (() => {
     if (!response.ok) {
       const error = new Error(body.error || 'The account service could not complete the request.');
       error.status = response.status;
+      error.details = body;
       throw error;
     }
     return body;
+  };
+
+  const saveTripEnvelope = (envelope) => {
+    if (!user || !envelope?.trip?.id) return null;
+    const localTrips = store.trips.load(user.email);
+    const local = localTrips.find((trip) => trip.id === envelope.trip.id);
+    const trip = { ...envelope.trip, ...(local?.llmRun ? { llmRun: local.llmRun } : {}) };
+    const next = localTrips.some((candidate) => candidate.id === trip.id)
+      ? localTrips.map((candidate) => candidate.id === trip.id ? trip : candidate)
+      : [...localTrips, trip];
+    store.trips.hydrate(user.email, next);
+    tripRecords.set(trip.id, { ...envelope, trip });
+    return trip;
+  };
+
+  const replayTripQueue = async () => {
+    if (!user) return;
+    const pending = store.tripQueue.load(user.email);
+    if (!pending.length) return;
+    const remaining = [];
+    for (const mutation of pending) {
+      try {
+        if (mutation.kind === 'create') {
+          try {
+            const created = await request('trips', { method: 'POST', body: JSON.stringify({ trip: mutation.trip }) });
+            saveTripEnvelope(created);
+          } catch (error) {
+            if (error.status !== 409) throw error;
+            const existing = await request(`trips/${encodeURIComponent(mutation.trip.id)}`);
+            saveTripEnvelope(existing);
+          }
+          continue;
+        }
+        let envelope = tripRecords.get(mutation.tripId);
+        if (!envelope) {
+          envelope = await request(`trips/${encodeURIComponent(mutation.tripId)}`);
+          saveTripEnvelope(envelope);
+        }
+        const saved = await request(`trips/${encodeURIComponent(mutation.tripId)}/document`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            baseRevision: envelope.revision,
+            clientMutationId: mutation.clientMutationId,
+            operations: mutation.operations,
+          }),
+        });
+        saveTripEnvelope(saved);
+      } catch (error) {
+        if (error.status === 409 && error.details?.current) saveTripEnvelope(error.details.current);
+        remaining.push({ ...mutation, error: String(error.message || error).slice(0, 300) });
+      }
+    }
+    store.tripQueue.save(user.email, remaining);
+    if (remaining.length) {
+      window.dispatchEvent(new CustomEvent('malem:trip-save-state', {
+        detail: { state: 'conflict', message: `${remaining.length} offline change${remaining.length === 1 ? '' : 's'} need attention.` },
+      }));
+    }
+  };
+
+  const hydrateTrips = async () => {
+    if (!user) return;
+    const localById = new Map(store.trips.load(user.email).map((trip) => [trip.id, trip]));
+    const response = await request('trips');
+    const serverTrips = [];
+    (response.trips || []).forEach((envelope) => {
+      if (!envelope?.trip) return;
+      const localTrace = localById.get(envelope.trip.id)?.llmRun;
+      const trip = localTrace ? { ...envelope.trip, llmRun: localTrace } : envelope.trip;
+      serverTrips.push(trip);
+      tripRecords.set(trip.id, { ...envelope, trip });
+    });
+    store.trips.hydrate(user.email, serverTrips);
+    const active = store.activeTrip.get(user.email);
+    if (active && !serverTrips.some((trip) => trip.id === active)) {
+      const nextActive = serverTrips.at(-1)?.id || null;
+      if (nextActive) store.activeTrip.set(user.email, nextActive);
+      else store.activeTrip.clear(user.email);
+    }
+    await replayTripQueue();
+  };
+
+  const hydrateTripsSafely = async () => {
+    try { await hydrateTrips(); }
+    catch (error) {
+      window.dispatchEvent(new CustomEvent('malem:sync-error', { detail: error.message }));
+    }
   };
 
   const hydrate = async ({ preferLocal = false } = {}) => {
@@ -2211,6 +2319,7 @@ const auth = (() => {
     }
     store.cloud.connect(user.email);
     await hydrateSafely({ preferLocal: true });
+    await hydrateTripsSafely();
     return user;
   };
 
@@ -2221,6 +2330,7 @@ const auth = (() => {
     });
     store.cloud.connect(user.email);
     await hydrateSafely({ preferLocal: true });
+    await hydrateTripsSafely();
     return user;
   };
 
@@ -2231,6 +2341,7 @@ const auth = (() => {
     });
     store.cloud.connect(user.email);
     await hydrateSafely();
+    await hydrateTripsSafely();
     return user;
   };
 
@@ -2240,6 +2351,7 @@ const auth = (() => {
     await request('logout', { method: 'POST' });
     user = null;
     stateDirty = false;
+    tripRecords.clear();
     store.cloud.disconnect();
   };
 
@@ -2251,6 +2363,7 @@ const auth = (() => {
     await request('account', { method: 'DELETE' });
     store.cloud.clear(email);
     user = null;
+    tripRecords.clear();
     store.cloud.disconnect();
   };
 
@@ -2260,7 +2373,117 @@ const auth = (() => {
     return syncNow().catch(() => {});
   };
 
-  return { init, signup, signin, signout, deleteAccount, current, flush, request };
+  const createTrip = async (trip) => {
+    if (!user) throw new Error('You are not signed in.');
+    const normalized = normalizeTripDocument(trip, { actor: user.email });
+    const localTrips = store.trips.load(user.email);
+    if (!localTrips.some((candidate) => candidate.id === normalized.id)) {
+      store.trips.hydrate(user.email, [...localTrips, normalized]);
+    }
+    // Keep a local envelope immediately so the new trip remains fully editable
+    // during an outage; queued creation is replayed before subsequent edits.
+    const localEnvelope = { trip: normalized, revision: 0, role: 'owner', currentUserId: user.email, offline: true };
+    tripRecords.set(normalized.id, localEnvelope);
+    try {
+      const envelope = await request('trips', { method: 'POST', body: JSON.stringify({ trip: normalized }) });
+      saveTripEnvelope(envelope);
+      return envelope;
+    } catch (error) {
+      if (error.status === 409) {
+        const envelope = await request(`trips/${encodeURIComponent(normalized.id)}`);
+        saveTripEnvelope(envelope);
+        return envelope;
+      }
+      const pending = store.tripQueue.load(user.email);
+      if (!pending.some((entry) => entry.kind === 'create' && entry.trip?.id === normalized.id)) {
+        pending.push({ kind: 'create', trip: normalized, queuedAt: Date.now() });
+        store.tripQueue.save(user.email, pending);
+      }
+      window.dispatchEvent(new CustomEvent('malem:sync-error', { detail: error.message }));
+      return localEnvelope;
+    }
+  };
+
+  const mutateTrip = async (tripId, operations) => {
+    if (!user) throw new Error('You are not signed in.');
+    let envelope = tripRecords.get(tripId);
+    if (!envelope) {
+      envelope = await request(`trips/${encodeURIComponent(tripId)}`);
+      saveTripEnvelope(envelope);
+    }
+    if (envelope.role === 'viewer') throw new Error('This trip is read-only for Passenger princess members.');
+    const clientMutationId = crypto.randomUUID();
+    const optimistic = applyTripOperations(envelope.trip, operations, { actor: user.email });
+    saveTripEnvelope({ ...envelope, trip: optimistic });
+    window.dispatchEvent(new CustomEvent('malem:trip-save-state', { detail: { state: 'saving', tripId } }));
+    try {
+      const saved = await request(`trips/${encodeURIComponent(tripId)}/document`, {
+        method: 'PATCH',
+        body: JSON.stringify({ baseRevision: envelope.revision, clientMutationId, operations }),
+      });
+      saveTripEnvelope(saved);
+      window.dispatchEvent(new CustomEvent('malem:trip-save-state', {
+        detail: { state: 'saved', tripId, mutation: saved.mutation },
+      }));
+      return saved;
+    } catch (error) {
+      if (error.status === 409 && error.details?.current) {
+        saveTripEnvelope(error.details.current);
+        window.dispatchEvent(new CustomEvent('malem:trip-save-state', {
+          detail: { state: 'conflict', tripId, message: 'Another traveler changed this trip. Review the refreshed plan and try again.' },
+        }));
+        throw error;
+      }
+      const queue = store.tripQueue.load(user.email);
+      queue.push({ tripId, clientMutationId, operations, queuedAt: Date.now() });
+      store.tripQueue.save(user.email, queue);
+      tripRecords.set(tripId, { ...envelope, trip: optimistic });
+      window.dispatchEvent(new CustomEvent('malem:trip-save-state', {
+        detail: { state: 'offline', tripId, message: 'Saved on this device. Malem will retry when the connection returns.' },
+      }));
+      return { ...envelope, trip: optimistic, queued: true };
+    }
+  };
+
+  const undoTripMutation = async (tripId, mutationId) => {
+    const envelope = tripRecords.get(tripId) || await request(`trips/${encodeURIComponent(tripId)}`);
+    const saved = await request(`trips/${encodeURIComponent(tripId)}/undo`, {
+      method: 'POST',
+      body: JSON.stringify({
+        mutationId,
+        baseRevision: envelope.revision,
+        clientMutationId: crypto.randomUUID(),
+      }),
+    });
+    saveTripEnvelope(saved);
+    return saved;
+  };
+
+  const refreshTrip = async (tripId) => {
+    const envelope = await request(`trips/${encodeURIComponent(tripId)}`);
+    saveTripEnvelope(envelope);
+    return envelope;
+  };
+
+  const deleteTrip = async (tripId) => {
+    await request(`trips/${encodeURIComponent(tripId)}`, { method: 'DELETE' });
+    tripRecords.delete(tripId);
+    if (user) store.trips.hydrate(user.email, store.trips.load(user.email).filter((trip) => trip.id !== tripId));
+  };
+
+  const acceptInvite = async (token) => {
+    const envelope = await request(`invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
+    saveTripEnvelope(envelope);
+    if (user) store.activeTrip.set(user.email, envelope.trip.id);
+    return envelope;
+  };
+
+  return {
+    init, signup, signin, signout, deleteAccount, current, flush, request,
+    createTrip, mutateTrip, undoTripMutation, refreshTrip, deleteTrip, acceptInvite,
+    tripEnvelope: (tripId) => tripRecords.get(tripId) || null,
+    tripRole: (tripId) => tripRecords.get(tripId)?.role || 'owner',
+  };
 })();
 
 // ---------- ui ----------
@@ -2268,6 +2491,7 @@ const ui = (() => {
   // Accumulates clarification turns (for example "five days" followed by
   // "Barcelona") so both AI and the local parser receive the full request.
   let pendingTripText = '';
+  let activeInviteToken = '';
   const $  = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -2281,9 +2505,63 @@ const ui = (() => {
   const flash = (sel, msg) => { const el = $(sel); if (!el) return; el.textContent = msg; clearTimeout(el._t); el._t = setTimeout(() => (el.textContent = ''), 4500); };
   const parseList = (s) => (s || '').split(',').map(x => x.trim()).filter(Boolean);
   const parseIntList = (s) => parseList(s).map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0);
+  const escapeAttr = escapeHtml;
+  let editorSubmitHandler = null;
+  let lastTripMutation = null;
+
+  const fieldMarkup = (field) => {
+    const value = field.value ?? '';
+    const common = `name="${escapeAttr(field.name)}"${field.required ? ' required' : ''}${field.placeholder ? ` placeholder="${escapeAttr(field.placeholder)}"` : ''}`;
+    if (field.type === 'textarea') {
+      return `<label class="field"><span>${escapeHtml(field.label)}</span><textarea ${common} rows="${Number(field.rows) || 3}">${escapeHtml(value)}</textarea></label>`;
+    }
+    if (field.type === 'select') {
+      return `<label class="field"><span>${escapeHtml(field.label)}</span><select ${common}>${(field.options || []).map((option) => {
+        const optionValue = typeof option === 'string' ? option : option.value;
+        const optionLabel = typeof option === 'string' ? option : option.label;
+        return `<option value="${escapeAttr(optionValue)}"${String(optionValue) === String(value) ? ' selected' : ''}>${escapeHtml(optionLabel)}</option>`;
+      }).join('')}</select></label>`;
+    }
+    if (field.type === 'checkbox') {
+      return `<label class="field inline-check"><input type="checkbox" name="${escapeAttr(field.name)}"${value ? ' checked' : ''} /><span>${escapeHtml(field.label)}</span></label>`;
+    }
+    return `<label class="field"><span>${escapeHtml(field.label)}</span><input type="${escapeAttr(field.type || 'text')}" ${common} value="${escapeAttr(value)}"${field.min != null ? ` min="${escapeAttr(field.min)}"` : ''}${field.step != null ? ` step="${escapeAttr(field.step)}"` : ''} /></label>`;
+  };
+
+  const openTripEditor = ({ title, description = '', fields = [], submitLabel = 'Save change', onSubmit }) => {
+    const dialog = $('#trip-editor');
+    $('#trip-editor-title').textContent = title;
+    $('#trip-editor-description').textContent = description;
+    $('#trip-editor-fields').innerHTML = fields.map((entry) => Array.isArray(entry)
+      ? `<div class="field-grid">${entry.map(fieldMarkup).join('')}</div>`
+      : fieldMarkup(entry)).join('');
+    $('#trip-editor-submit').textContent = submitLabel;
+    $('#trip-editor-note').textContent = '';
+    editorSubmitHandler = onSubmit;
+    dialog.showModal();
+    setTimeout(() => dialog.querySelector('input, textarea, select')?.focus(), 0);
+  };
+
+  const closeTripEditor = () => {
+    const dialog = $('#trip-editor');
+    editorSubmitHandler = null;
+    if (dialog?.open) dialog.close();
+  };
+
+  const commitTripOperations = async (tripId, operations) => {
+    const saved = await auth.mutateTrip(tripId, operations);
+    showRoute();
+    return saved;
+  };
+
+  const tripAccess = (trip) => {
+    const envelope = trip && auth.tripEnvelope(trip.id);
+    const role = envelope?.role || 'owner';
+    return { role, editable: role === 'owner' || role === 'collaborator', owner: role === 'owner' };
+  };
 
   const showScreen = (name) => {
-    ['auth','app','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
+    ['auth','invite','app','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
@@ -2327,7 +2605,8 @@ const ui = (() => {
         if (authMode === 'signup') await auth.signup(form.name.value, form.email.value, form.password.value);
         else await auth.signin(form.email.value, form.password.value);
         form.reset();
-        location.hash = '#/chat';
+        const pendingInvite = sessionStorage.getItem('malem.pendingInvite.v1');
+        location.hash = pendingInvite ? `#/invite/${encodeURIComponent(pendingInvite)}` : '#/chat';
         route();
       } catch (err) { flash('#auth-note', err.message || 'Something went wrong.'); }
       finally {
@@ -2448,8 +2727,10 @@ const ui = (() => {
     const vibe = DATA.VIBES.find(v => v.key === result.trip.primaryVibe);
     const destName = bundle?.destinationMeta?.name || staticDest?.name || destGuess;
     const summary = `${vibe ? vibe.title : 'Trip'} in ${destName}`;
-    const trip = store.trips.add(me.email, { ...result.trip, originalInput: parseText, summary, weather: wx, bundle, llmRun });
+    let trip = store.trips.add(me.email, { ...result.trip, originalInput: parseText, summary, weather: wx, bundle, llmRun });
     store.activeTrip.set(me.email, trip.id);
+    const created = await auth.createTrip(trip);
+    trip = created.trip || trip;
 
     // 5) Reply, tuned to what actually happened.
     let replyText;
@@ -2483,6 +2764,10 @@ const ui = (() => {
     const button = $('#btn-refresh-live');
     const status = $('#research-status');
     if (!trip || !button || !status) return;
+    if (!tripAccess(trip).editable) {
+      status.textContent = 'Passenger princess access is view-only.';
+      return;
+    }
     await ai.refreshOpenRouterStatus();
     if (!ai.enabled()) {
       status.textContent = 'Connect OpenRouter, OpenAI, or Anthropic in Settings to refresh web research.';
@@ -2494,17 +2779,36 @@ const ui = (() => {
     try {
       const profile = store.profile.load(me.email);
       const wx = await weather.forecast(trip.destination, trip.days);
-      const generated = await ai.generateTrip(trip, profile, wx);
+      let collaboration = null;
+      try { collaboration = (await auth.request(`trips/${encodeURIComponent(trip.id)}/collaboration-context`)).context; }
+      catch {}
+      const generated = await ai.generateTrip(trip, profile, wx, collaboration);
       const bundle = generated?.bundle || null;
       const llmRun = generated?.llmRun || null;
       if (!bundle) throw new Error('The itinerary generator returned no plan.');
-      const updated = store.trips.update(me.email, trip.id, {
-        weather: wx, bundle, llmRun, researchUpdatedAt: new Date().toISOString(),
+      const generatedTrip = {
+        ...trip, weather: wx, bundle, researchUpdatedAt: new Date().toISOString(),
+      };
+      const preview = mergeGeneratedTrip(trip, generatedTrip, { actor: 'generator' });
+      const previousTitles = new Set(trip.bundle?.itinerary?.days?.flatMap((day) => day.blocks.map((block) => block.title)) || []);
+      const proposedTitles = new Set(preview.document.bundle?.itinerary?.days?.flatMap((day) => day.blocks.map((block) => block.title)) || []);
+      const added = [...proposedTitles].filter((title) => !previousTitles.has(title)).length;
+      const removed = [...previousTitles].filter((title) => !proposedTitles.has(title)).length;
+      const protectedCount = preview.carried.itinerary.length + preview.carried.packing.length;
+      status.textContent = 'Live proposal ready for review. Nothing changes until you accept it.';
+      openTripEditor({
+        title: 'Review refreshed plan',
+        description: `${added} new place or activity title${added === 1 ? '' : 's'}, ${removed} proposed removal${removed === 1 ? '' : 's'}, and ${protectedCount} manual item${protectedCount === 1 ? '' : 's'} protected. Group votes and shared requirements were included${collaboration?.memberCount ? ` from ${collaboration.memberCount} traveler${collaboration.memberCount === 1 ? '' : 's'}` : ''}.`,
+        fields: [{ name: 'confirmApply', label: 'Apply this proposal while preserving every locked manual item', type: 'checkbox', value: false }],
+        submitLabel: 'Apply refreshed plan',
+        onSubmit: async (_values, form) => {
+          if (!form.confirmApply.checked) throw new Error('Confirm that you want to apply this reviewed proposal.');
+          await commitTripOperations(trip.id, [{ type: 'regeneration.apply', generatedTrip }]);
+          if (llmRun) store.trips.update(me.email, trip.id, { llmRun });
+          status.textContent = `Live research applied ${new Date().toLocaleString()}.`;
+          renderTripHistory(me); renderItinerary();
+        },
       });
-      if (!updated) throw new Error('Could not update the saved trip.');
-      status.textContent = `Live research refreshed ${new Date().toLocaleString()}.`;
-      renderTripHistory(me);
-      renderItinerary();
     } catch (error) {
       status.textContent = `Refresh failed: ${String(error?.message || error).slice(0, 180)}`;
     } finally {
@@ -2965,59 +3269,216 @@ const ui = (() => {
     $('#side-toggle').addEventListener('click', () => {
       const d = $('#screen-app'); d.dataset.navOpen = d.dataset.navOpen === 'true' ? 'false' : 'true';
     });
+    $('#signin-for-invite').addEventListener('click', () => {
+      if (activeInviteToken) sessionStorage.setItem('malem.pendingInvite.v1', activeInviteToken);
+      location.hash = '#/auth'; route();
+    });
+    $('#accept-trip-invite').addEventListener('click', async (event) => {
+      if (!activeInviteToken) return;
+      event.currentTarget.disabled = true;
+      flash('#invite-screen-note', 'Joining the shared trip…');
+      try {
+        const envelope = await auth.acceptInvite(activeInviteToken);
+        sessionStorage.removeItem('malem.pendingInvite.v1');
+        activeInviteToken = '';
+        location.hash = '#/itinerary';
+        route();
+        flash('#global-status', `Joined ${envelope.metadata?.title || 'the trip'} as ${envelope.role === 'viewer' ? 'Passenger princess' : envelope.role}.`);
+      } catch (error) { flash('#invite-screen-note', error.message || 'Could not join this trip.'); }
+      finally { event.currentTarget.disabled = false; }
+    });
 
     $('#toggle-packing-controls').addEventListener('click', () => { const f = $('#packing-form'); f.hidden = !f.hidden; });
-    $('#btn-rebuild-packing').addEventListener('click', () => { renderPacking(readPackingReq()); });
+    $('#btn-rebuild-packing').addEventListener('click', rebuildPacking);
     $('#toggle-discover-controls').addEventListener('click', () => { const f = $('#discover-form'); f.hidden = !f.hidden; });
-    $('#btn-rebuild-discover').addEventListener('click', renderDiscover);
+    $('#btn-rebuild-discover').addEventListener('click', generateDiscover);
+    $('#use-discover-location').addEventListener('click', () => {
+      const form = $('#discover-form');
+      if (!navigator.geolocation) { flash('#discover-location-note', 'Location is unavailable in this browser. Enter a neighborhood instead.'); return; }
+      flash('#discover-location-note', 'Requesting your current location…');
+      navigator.geolocation.getCurrentPosition((position) => {
+        form.latitude.value = String(position.coords.latitude);
+        form.longitude.value = String(position.coords.longitude);
+        form.startingLocation.value = 'Current location';
+        flash('#discover-location-note', 'Current location ready for this search only.');
+      }, () => {
+        form.latitude.value = ''; form.longitude.value = '';
+        flash('#discover-location-note', 'Location was not shared. Enter a neighborhood or landmark instead.');
+      }, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 });
+    });
     $('#btn-refresh-live').addEventListener('click', refreshActiveTrip);
     $('#toggle-local-controls').addEventListener('click', () => { const f = $('#local-form'); f.hidden = !f.hidden; });
     $('#btn-rebuild-local').addEventListener('click', renderLocal);
     $('#clear-local-place-feedback').addEventListener('click', (event) => clearSavedPlaceFeedback('#local-place-feedback-note', event.currentTarget));
 
-    $('#add-member').addEventListener('click', () => {
-      const me = auth.current(); const f = $('#member-form');
-      const name = f.name.value.trim(); if (!name) return;
-      const members = store.group.load(me.email);
-      members.push({ id: 'm' + performance.now(), name, ageBand: f.ageBand.value, constraints: parseList(f.constraints.value), vibe: f.vibe.value || '' });
-      store.group.save(me.email, members); f.reset(); renderMembers();
+    $('#invite-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      submit.disabled = true; flash('#invite-note', 'Creating a secure invitation…');
+      try {
+        const values = Object.fromEntries(new FormData(event.currentTarget));
+        const result = await auth.request(`trips/${encodeURIComponent(trip.id)}/invites`, {
+          method: 'POST', body: JSON.stringify({ ...values, maxUses: Number(values.maxUses) || 1 }),
+        });
+        $('#invite-url').value = result.url;
+        $('#invite-result').hidden = false;
+        $('#text-invite').href = `sms:?&body=${encodeURIComponent(`Join my ${destMetaFor(trip).name || trip.destination} trip on Malem: ${result.url}`)}`;
+        flash('#invite-note', 'Secure link created. It is shown only now; create another if it is lost.');
+        await renderMembers();
+      } catch (error) { flash('#invite-note', error.message || 'Could not create invitation.'); }
+      finally { submit.disabled = false; }
     });
-    $('#members-list').addEventListener('click', (e) => {
-      const btn = e.target.closest('button.remove'); if (!btn) return;
-      const me = auth.current();
-      store.group.save(me.email, store.group.load(me.email).filter(m => m.id !== btn.dataset.id));
+    $('#copy-invite').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText($('#invite-url').value); flash('#invite-note', 'Invite link copied.'); }
+      catch { $('#invite-url').select(); document.execCommand('copy'); flash('#invite-note', 'Invite link copied.'); }
+    });
+    $('#share-invite').addEventListener('click', async () => {
+      const url = $('#invite-url').value; if (!url) return;
+      if (navigator.share) {
+        try { await navigator.share({ title: 'Join my Malem trip', text: 'Open this secure invitation to join my trip.', url }); }
+        catch {}
+      } else {
+        try { await navigator.clipboard.writeText(url); flash('#invite-note', 'Sharing is unavailable here, so the link was copied.'); }
+        catch { flash('#invite-note', 'Copy the link above to share it.'); }
+      }
+    });
+    $('#members-list').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-member-action]'); if (!button) return;
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+      if (button.dataset.memberAction === 'remove') {
+        await auth.request(`trips/${encodeURIComponent(trip.id)}/members/${encodeURIComponent(button.dataset.userId)}`, { method: 'DELETE' });
+      } else if (button.dataset.memberAction === 'role') {
+        await auth.request(`trips/${encodeURIComponent(trip.id)}/members/${encodeURIComponent(button.dataset.userId)}`, {
+          method: 'PATCH', body: JSON.stringify({ role: button.dataset.role }),
+        });
+      }
+      await auth.refreshTrip(trip.id); renderMembers();
+    });
+    $('#invite-list').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-invite-id]'); if (!button) return;
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+      await auth.request(`trips/${encodeURIComponent(trip.id)}/invites/${encodeURIComponent(button.dataset.inviteId)}`, { method: 'DELETE' });
       renderMembers();
     });
-    $('#add-journal').addEventListener('click', () => {
+    $('#vibe-vote-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+      const values = Object.fromEntries(new FormData(event.currentTarget));
+      try {
+        await auth.request(`trips/${encodeURIComponent(trip.id)}/vibes/vote`, { method: 'POST', body: JSON.stringify(values) });
+        await auth.refreshTrip(trip.id); renderMembers();
+      } catch (error) { flash('#global-status', error.message); }
+    });
+    $('#shared-constraints-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+      await commitTripOperations(trip.id, [{
+        type: 'collaboration.constraints.update', constraints: parseList(event.currentTarget.constraints.value),
+      }]);
+    });
+    $('#add-journal').addEventListener('click', async () => {
       const me = auth.current(); const f = $('#journal-form');
+      const trip = activeTripFor(me.email); if (!trip || !tripAccess(trip).editable) return;
       const entry = {
-        id: 'j' + performance.now(),
         title: f.title.value.trim() || 'Untitled entry',
         did: f.did.value.trim(), change: f.change.value.trim(),
         accessAccuracy: f.accessAccuracy.value, dietAccuracy: f.dietAccuracy.value,
         publicEntry: f.publicEntry.checked,
-        destination: activeTripFor(me.email)?.destination || '',
+        destination: trip.destination || '',
         date: new Date().toISOString().slice(0, 10),
       };
-      const list = store.journal.load(me.email); list.push(entry); store.journal.save(me.email, list);
+      await commitTripOperations(trip.id, [{ type: 'journal.add', entry }]);
       f.reset(); renderJournal(); flash('#journal-note', 'Entry saved.');
     });
-    $('#journal-list').addEventListener('click', (event) => {
+    $('#journal-list').addEventListener('click', async (event) => {
       const button = event.target.closest('button[data-journal-action]');
       if (!button) return;
-      const me = auth.current();
-      let entries = store.journal.load(me.email);
+      const me = auth.current(); const trip = activeTripFor(me.email); if (!trip || !tripAccess(trip).editable) return;
+      const entry = (trip.journal || []).find((candidate) => candidate.id === button.dataset.id);
+      if (button.dataset.journalAction === 'edit' && entry) {
+        openTripEditor({
+          title: 'Edit journal entry',
+          fields: [
+            { name: 'title', label: 'Entry title', value: entry.title, required: true },
+            { name: 'did', label: 'What you actually did', type: 'textarea', value: entry.did || '' },
+            { name: 'change', label: 'What you would change', type: 'textarea', value: entry.change || '' },
+            [{ name: 'accessAccuracy', label: 'Accessibility accuracy', type: 'select', value: entry.accessAccuracy || '', options: [{ value: '', label: '—' }, { value: 'as-listed', label: 'As listed' }, { value: 'worse', label: 'Worse than listed' }, { value: 'better', label: 'Better than listed' }] }, { name: 'dietAccuracy', label: 'Dietary accuracy', type: 'select', value: entry.dietAccuracy || '', options: [{ value: '', label: '—' }, { value: 'as-listed', label: 'As listed' }, { value: 'worse', label: 'Worse than listed' }, { value: 'better', label: 'Better than listed' }] }],
+          ],
+          onSubmit: (values) => commitTripOperations(trip.id, [{ type: 'journal.update', entryId: entry.id, patch: values }]),
+        });
+        return;
+      }
       if (button.dataset.journalAction === 'remove') {
-        entries = entries.filter((entry) => String(entry.id) !== button.dataset.id);
+        await commitTripOperations(trip.id, [{ type: 'journal.remove', entryId: button.dataset.id }]);
         flash('#journal-note', 'Entry removed.');
       } else {
-        entries = entries.map((entry) => String(entry.id) === button.dataset.id
-          ? { ...entry, publicEntry: !entry.publicEntry }
-          : entry);
+        await commitTripOperations(trip.id, [{
+          type: 'journal.update', entryId: button.dataset.id,
+          patch: { publicEntry: button.dataset.public !== 'true' },
+        }]);
         flash('#journal-note', button.dataset.public === 'true' ? 'Entry is now private.' : 'Entry published.');
       }
-      store.journal.save(me.email, entries);
       renderJournal();
+    });
+
+    $('#trip-editor-close').addEventListener('click', closeTripEditor);
+    $('#trip-editor-cancel').addEventListener('click', closeTripEditor);
+    $('#trip-editor').addEventListener('cancel', (event) => {
+      event.preventDefault(); closeTripEditor();
+    });
+    $('#trip-editor-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!editorSubmitHandler) return;
+      const submit = $('#trip-editor-submit');
+      submit.disabled = true;
+      $('#trip-editor-note').textContent = 'Saving…';
+      try {
+        const values = Object.fromEntries(new FormData(event.currentTarget));
+        await editorSubmitHandler(values, event.currentTarget);
+        closeTripEditor();
+      } catch (error) {
+        $('#trip-editor-note').textContent = String(error.message || error).slice(0, 240);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    window.addEventListener('malem:trip-save-state', (event) => {
+      const banner = $('#trip-save-banner');
+      const detail = event.detail || {};
+      banner.hidden = false;
+      banner.dataset.state = detail.state || 'saving';
+      const messages = {
+        saving: 'Saving this trip…',
+        saved: 'Trip saved for everyone.',
+        offline: detail.message || 'Saved on this device. Malem will retry online.',
+        conflict: detail.message || 'Another traveler changed this trip. Review the latest version.',
+      };
+      $('#trip-save-message').textContent = messages[detail.state] || detail.message || 'Trip updated.';
+      if (detail.state === 'saved' && detail.mutation?.id) {
+        lastTripMutation = { tripId: detail.tripId, mutationId: detail.mutation.id };
+        $('#trip-undo').hidden = false;
+      } else if (detail.state !== 'saving') {
+        $('#trip-undo').hidden = true;
+      }
+      clearTimeout(banner._hideTimer);
+      if (detail.state === 'saved') banner._hideTimer = setTimeout(() => { banner.hidden = true; }, 6500);
+    });
+    $('#trip-undo').addEventListener('click', async (event) => {
+      if (!lastTripMutation) return;
+      event.currentTarget.disabled = true;
+      try {
+        await auth.undoTripMutation(lastTripMutation.tripId, lastTripMutation.mutationId);
+        lastTripMutation = null;
+        $('#trip-save-message').textContent = 'Change undone.';
+        $('#trip-undo').hidden = true;
+        showRoute();
+      } catch (error) {
+        $('#trip-save-message').textContent = error.message || 'This change can no longer be undone.';
+      } finally {
+        event.currentTarget.disabled = false;
+      }
     });
   };
 
@@ -3035,6 +3496,8 @@ const ui = (() => {
   const renderItinerary = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); const profile = store.profile.load(me.email);
     if (!trip) return;
+    const access = tripAccess(trip);
+    const envelope = auth.tripEnvelope(trip.id);
     const meta = destMetaFor(trip);
     const vibe = DATA.VIBES.find(v => v.key === trip.primaryVibe);
     $('#itin-hero').textContent = meta.name || trip.destination;
@@ -3061,34 +3524,179 @@ const ui = (() => {
       $('#itinerary-output [data-build-live-itinerary]')?.addEventListener('click', refreshActiveTrip);
       return;
     }
-    $('#itinerary-output').innerHTML = (itin.days || []).map((day, i) => `
+    const root = $('#itinerary-output');
+    const ticketLabel = (booking) => {
+      if (!booking?.price?.currency || !Number.isFinite(Number(booking.price.amount))) return '';
+      try {
+        const price = new Intl.NumberFormat(undefined, { style: 'currency', currency: booking.price.currency }).format(Number(booking.price.amount));
+        return `${booking.price.qualifier === 'from' ? 'From ' : ''}${price}`;
+      } catch { return `${booking.price.qualifier === 'from' ? 'From ' : ''}${booking.price.amount} ${booking.price.currency}`; }
+    };
+    root.innerHTML = `${!access.editable ? '<p class="read-only-note">Passenger princess access is view-only. Directions, sources, and booking information remain available.</p>' : ''}${(itin.days || []).map((day, i) => `
       <article class="itin-day">
-        <header>
+        <header class="editable-head">
           <h3>Day ${i + 1}${day.date ? ` <span class="hint" style="font-family:var(--font-sans);font-size:.85rem;margin-left:.5rem;">${escapeHtml(day.date)}</span>` : ''}</h3>
           <span class="theme">${escapeHtml(day.theme)}</span>
+          ${access.editable ? `<button type="button" class="edit-action" data-itin-action="edit-day" data-day-id="${escapeAttr(day.id)}">Edit day</button>` : ''}
         </header>
-        ${(day.blocks || []).map(b => {
-          const sourceUrl = safeExternalUrl(b.sourceUrl);
-          const reviewUrl = safeExternalUrl(b.reviewSourceUrl);
+        ${(day.blocks || []).map((b, blockIndex) => {
+          const place = b.place || {};
+          const sourceUrl = safeExternalUrl(place.sourceUrl || b.sourceUrl);
+          const reviewUrl = safeExternalUrl(place.reviewsUrl || b.reviewSourceUrl);
+          const directionsUrl = safeExternalUrl(place.directionsUrl) || (place.name || place.address ? makeMapsDirectionsUrl(place) : '');
+          const bookingUrl = b.booking?.required === 'yes' ? safeExternalUrl(b.booking.officialBookingUrl) : '';
           const evidence = [
             b.businessSize && b.businessSize !== 'unknown' ? b.businessSize.replace('-', ' ') : '',
-            b.rating != null && b.rating !== '' && Number.isFinite(Number(b.rating)) ? `★ ${Number(b.rating).toFixed(1)}` : '',
-            b.reviewCount != null && b.reviewCount !== '' && Number.isFinite(Number(b.reviewCount)) ? `${Number(b.reviewCount).toLocaleString()} reviews` : '',
-            b.checkedAt ? `checked ${b.checkedAt}` : '',
+            place.rating != null && Number.isFinite(Number(place.rating)) ? `★ ${Number(place.rating).toFixed(1)}` : (b.rating != null && Number.isFinite(Number(b.rating)) ? `★ ${Number(b.rating).toFixed(1)}` : ''),
+            place.reviewCount != null && Number.isFinite(Number(place.reviewCount)) ? `${Number(place.reviewCount).toLocaleString()} reviews` : (b.reviewCount != null && Number.isFinite(Number(b.reviewCount)) ? `${Number(b.reviewCount).toLocaleString()} reviews` : ''),
+            (place.checkedAt || b.checkedAt) ? `checked ${place.checkedAt || b.checkedAt}` : '',
           ].filter(Boolean);
+          const blockVotes = (envelope?.votes?.itinerary || []).filter((vote) => vote.itemId === b.id);
+          const mine = blockVotes.find((vote) => vote.userId === envelope?.currentUserId);
+          const positive = blockVotes.filter((vote) => vote.value > 0).length;
+          const negative = blockVotes.filter((vote) => vote.value < 0).length;
           return `
-          <div class="itin-block">
+          <div class="itin-block" data-block-id="${escapeAttr(b.id || '')}">
             <div class="when">${escapeHtml(b.time)}<br /><small>${escapeHtml(b.duration)}</small></div>
             <div class="what">
               <strong>${escapeHtml(b.title)}</strong>
               <small>${escapeHtml(b.kind)}</small>
-              ${b.reviewSummary ? `<p class="place-review">${escapeHtml(b.reviewSummary)}</p>` : ''}
+              ${(place.description || place.reviewSummary || b.reviewSummary || b.notes) ? `<p class="place-review">${escapeHtml(place.description || place.reviewSummary || b.reviewSummary || b.notes)}</p>` : ''}
               ${evidence.length || sourceUrl || reviewUrl ? `<div class="place-evidence">${evidence.map(v => `<span>${escapeHtml(v)}</span>`).join('')}${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}${reviewUrl && reviewUrl !== sourceUrl ? `<a href="${escapeHtml(reviewUrl)}" target="_blank" rel="noopener">Reviews ↗</a>` : ''}</div>` : ''}
+              ${directionsUrl || bookingUrl ? `<div class="place-actions">${directionsUrl ? `<a href="${escapeAttr(directionsUrl)}" target="_blank" rel="noopener">Directions ↗</a>` : ''}${bookingUrl ? `<a href="${escapeAttr(bookingUrl)}" target="_blank" rel="noopener">Book official tickets ↗</a>` : ''}${ticketLabel(b.booking) ? `<span class="ticket-price">${escapeHtml(ticketLabel(b.booking))}</span>` : ''}${b.booking?.priceCheckedAt ? `<span class="hint">checked ${escapeHtml(b.booking.priceCheckedAt)}</span>` : ''}</div>` : ''}
               ${b.respects ? `<div class="respects">${b.respects.map(r => `<span>${escapeHtml(r)}</span>`).join('')}</div>` : ''}
+              ${access.editable ? `<div class="edit-actions">
+                <button type="button" class="edit-action" data-itin-action="edit" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}">Edit</button>
+                <button type="button" class="edit-action" data-itin-action="move-up" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}"${blockIndex === 0 ? ' disabled' : ''}>↑ Move</button>
+                <button type="button" class="edit-action" data-itin-action="move-down" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}"${blockIndex === day.blocks.length - 1 ? ' disabled' : ''}>↓ Move</button>
+                <button type="button" class="edit-action danger" data-itin-action="remove" data-day-id="${escapeAttr(day.id)}" data-block-id="${escapeAttr(b.id)}">Remove</button>
+                <button type="button" class="edit-action${mine?.value === 1 ? ' is-active' : ''}" data-itin-action="vote-up" data-block-id="${escapeAttr(b.id)}" aria-label="Like ${escapeAttr(b.title)}">♡ ${positive}</button>
+                <button type="button" class="edit-action${mine?.value === -1 ? ' is-active' : ''}" data-itin-action="vote-down" data-block-id="${escapeAttr(b.id)}" aria-label="Dislike ${escapeAttr(b.title)}">× ${negative}</button>
+                ${(b.locked || b.origin === 'manual') ? '<span class="edit-lock">Manual · protected from regeneration</span>' : ''}
+              </div>` : ''}
             </div>
           </div>`;
         }).join('')}
-      </article>`).join('');
+        ${access.editable ? `<button type="button" class="btn ghost" data-itin-action="add" data-day-id="${escapeAttr(day.id)}">＋ Add activity</button>` : ''}
+      </article>`).join('')}`;
+
+    root.onclick = async (event) => {
+      const button = event.target.closest('[data-itin-action]');
+      if (!button) return;
+      const action = button.dataset.itinAction;
+      const day = itin.days.find((candidate) => candidate.id === button.dataset.dayId);
+      const block = day?.blocks?.find((candidate) => candidate.id === button.dataset.blockId);
+      if (action === 'edit-day' && day) {
+        openTripEditor({
+          title: 'Edit itinerary day',
+          description: 'The day theme and date are shared with every traveler.',
+          fields: [[
+            { name: 'date', label: 'Date', type: 'date', value: day.date || '' },
+            { name: 'theme', label: 'Day theme', value: day.theme || '', required: true },
+          ]],
+          onSubmit: (values) => commitTripOperations(trip.id, [{ type: 'itinerary.day.update', dayId: day.id, patch: values }]),
+        });
+        return;
+      }
+      if ((action === 'edit' || action === 'add') && day) {
+        const current = block || { time: '', title: '', duration: '', kind: 'activity', notes: '', place: {}, booking: { required: 'unknown' } };
+        const place = current.place || {};
+        const booking = current.booking || { required: 'unknown' };
+        openTripEditor({
+          title: block ? 'Edit itinerary activity' : 'Add itinerary activity',
+          description: 'Add verified links when available. Ticket information appears only when booking is marked required.',
+          fields: [
+            [
+              { name: 'time', label: 'Start time', type: 'time', value: current.time },
+              { name: 'duration', label: 'Duration', value: current.duration, placeholder: '90 min' },
+            ],
+            { name: 'title', label: 'Place or activity', value: current.title, required: true },
+            ...(block ? [{
+              name: 'destinationDayId', label: 'Move to day', type: 'select', value: day.id,
+              options: itin.days.map((candidate, index) => ({ value: candidate.id, label: `Day ${index + 1} — ${candidate.theme || 'Untitled'}` })),
+            }] : []),
+            [
+              { name: 'kind', label: 'Type', type: 'select', value: current.kind, options: ['meal', 'sight', 'activity', 'rest', 'transit', 'shopping'] },
+              { name: 'address', label: 'Address', value: place.address || '' },
+            ],
+            { name: 'notes', label: 'Description or notes', type: 'textarea', value: current.notes || place.description || '' },
+            [
+              { name: 'sourceUrl', label: 'Source URL', type: 'url', value: place.sourceUrl || current.sourceUrl || '' },
+              { name: 'reviewsUrl', label: 'Reviews URL', type: 'url', value: place.reviewsUrl || current.reviewSourceUrl || '' },
+            ],
+            [
+              { name: 'directionsUrl', label: 'Directions URL (optional)', type: 'url', value: place.directionsUrl || '' },
+              { name: 'bookingRequired', label: 'Tickets needed?', type: 'select', value: booking.required || 'unknown', options: [
+                { value: 'unknown', label: 'Unknown / verify' }, { value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' },
+              ] },
+            ],
+            [
+              { name: 'bookingUrl', label: 'Official booking URL', type: 'url', value: booking.officialBookingUrl || '' },
+              { name: 'price', label: 'Ticket price', type: 'number', min: '0', step: '0.01', value: booking.price?.amount ?? '' },
+            ],
+            [
+              { name: 'currency', label: 'Currency', value: booking.price?.currency || '', placeholder: 'EUR' },
+              { name: 'priceCheckedAt', label: 'Price checked', type: 'date', value: booking.priceCheckedAt || '' },
+            ],
+          ],
+          submitLabel: block ? 'Save activity' : 'Add activity',
+          onSubmit: (values) => {
+            const placeValue = {
+              ...place, name: values.title, description: values.notes, address: values.address,
+              sourceUrl: values.sourceUrl, reviewsUrl: values.reviewsUrl,
+              directionsUrl: values.directionsUrl || makeMapsDirectionsUrl({ name: values.title, address: values.address }),
+              checkedAt: new Date().toISOString().slice(0, 10),
+            };
+            const bookingValue = {
+              required: values.bookingRequired,
+              officialBookingUrl: values.bookingUrl,
+              price: values.price && values.currency ? { amount: Number(values.price), currency: values.currency.toUpperCase(), qualifier: 'standard' } : undefined,
+              priceCheckedAt: values.priceCheckedAt,
+              sourceUrl: values.bookingUrl,
+            };
+            const payload = {
+              time: values.time, title: values.title, duration: values.duration, kind: values.kind,
+              notes: values.notes, place: placeValue, booking: bookingValue,
+            };
+            const operations = [block
+              ? { type: 'itinerary.block.update', dayId: day.id, blockId: block.id, patch: payload }
+              : { type: 'itinerary.block.add', dayId: day.id, block: payload }];
+            if (block && values.destinationDayId && values.destinationDayId !== day.id) {
+              operations.push({
+                type: 'itinerary.block.move', fromDayId: day.id, toDayId: values.destinationDayId,
+                blockId: block.id, afterId: '',
+              });
+            }
+            return commitTripOperations(trip.id, operations);
+          },
+        });
+        return;
+      }
+      if (action === 'remove' && day && block) {
+        if (!confirm(`Remove “${block.title}” from this trip? You can undo immediately after saving.`)) return;
+        await commitTripOperations(trip.id, [{ type: 'itinerary.block.remove', dayId: day.id, blockId: block.id }]);
+        return;
+      }
+      if ((action === 'move-up' || action === 'move-down') && day && block) {
+        const index = day.blocks.findIndex((candidate) => candidate.id === block.id);
+        const afterId = action === 'move-up'
+          ? (index > 1 ? day.blocks[index - 2].id : '')
+          : day.blocks[index + 1]?.id;
+        await commitTripOperations(trip.id, [{
+          type: 'itinerary.block.move', fromDayId: day.id, toDayId: day.id, blockId: block.id, afterId,
+        }]);
+        return;
+      }
+      if ((action === 'vote-up' || action === 'vote-down') && block) {
+        const desired = action === 'vote-up' ? 1 : -1;
+        const mine = (envelope?.votes?.itinerary || []).find((vote) => vote.itemId === block.id && vote.userId === envelope.currentUserId);
+        await auth.request(`trips/${encodeURIComponent(trip.id)}/itinerary/${encodeURIComponent(block.id)}/vote`, {
+          method: 'POST', body: JSON.stringify({ value: mine?.value === desired ? 0 : desired }),
+        });
+        await auth.refreshTrip(trip.id);
+        renderItinerary();
+      }
+    };
   };
 
   // Concise product query from a verbose look value ("Cotton tee or linen shirt" -> "Cotton tee").
@@ -3407,10 +4015,24 @@ const ui = (() => {
       activities: $$('[data-chips="activities"] input:checked').map(i => i.value),
     };
   };
+  const rebuildPacking = async (event) => {
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    const button = event?.currentTarget || $('#btn-rebuild-packing');
+    button.disabled = true; button.textContent = 'Rebuilding…';
+    try {
+      const req = readPackingReq();
+      const result = engine.buildPacking(req, store.profile.load(me.email));
+      await commitTripOperations(trip.id, [{ type: 'packing.replace', packing: result }]);
+      $('#packing-form').hidden = true;
+    } finally {
+      button.disabled = false; button.textContent = 'Rebuild list';
+    }
+  };
+
   const renderPacking = (req) => {
     const me = auth.current();
     const trip = activeTripFor(me.email);
-    const customized = Boolean(req);
+    const access = trip ? tripAccess(trip) : { editable: false };
     if (!req) {
       if (!trip) return;
       const defaults = { 'live-like-local':['walking-city'], 'iconic-first-visit':['walking-city','museums'],
@@ -3421,40 +4043,304 @@ const ui = (() => {
       $('#packing-form select[name="season"]').value = trip.season || 'summer';
       req = readPackingReq();
     }
-    // Prefer the saved live plan; the deterministic builder works for any destination.
-    let result;
-    if (!customized && trip?.bundle?.packing?.lists?.length) result = trip.bundle.packing;
-    else result = engine.buildPacking(req, store.profile.load(me.email));
-    $('#packing-output').innerHTML = `
+    const result = trip?.bundle?.packing?.lists?.length
+      ? trip.bundle.packing
+      : engine.buildPacking(req, store.profile.load(me.email));
+    const root = $('#packing-output');
+    root.innerHTML = `
+      ${!access.editable ? '<p class="read-only-note">Passenger princess access is view-only. You can still check the shared packing guide.</p>' : ''}
       <div class="pack-grid">
         ${result.lists.map(l => `
           <section class="pack-list"${l.tone ? ` data-tone="${l.tone}"` : ''}>
             <h4>${escapeHtml(l.title)} <span class="count">${l.items.length}</span></h4>
-            <ul>${l.items.map(it => `<li><strong>${escapeHtml(it.item)}</strong>${it.why ? `<span class="why">${escapeHtml(it.why)}</span>` : ''}</li>`).join('') || '<li class="why">Nothing to add.</li>'}</ul>
+            ${access.editable ? `<div class="pack-list-actions">
+              <button type="button" class="edit-action" data-pack-action="edit-section" data-section-id="${escapeAttr(l.id)}">Edit section</button>
+              <button type="button" class="edit-action" data-pack-action="add-item" data-section-id="${escapeAttr(l.id)}">＋ Add item</button>
+              <button type="button" class="edit-action danger" data-pack-action="remove-section" data-section-id="${escapeAttr(l.id)}">Remove section</button>
+            </div>` : ''}
+            <ul>${l.items.map((it, index) => `<li data-item-id="${escapeAttr(it.id)}">
+              <div class="pack-item-row" data-checked="${String(Boolean(it.checked))}">
+                <input type="checkbox" data-pack-action="toggle-item" data-section-id="${escapeAttr(l.id)}" data-item-id="${escapeAttr(it.id)}"${it.checked ? ' checked' : ''}${!access.editable ? ' disabled' : ''} aria-label="Packed ${escapeAttr(it.item)}" />
+                <div class="pack-item-copy"><strong>${escapeHtml(it.item)}</strong>${it.why ? `<span class="why">${escapeHtml(it.why)}</span>` : ''}</div>
+              </div>
+              ${access.editable ? `<div class="edit-actions">
+                <button type="button" class="edit-action" data-pack-action="edit-item" data-section-id="${escapeAttr(l.id)}" data-item-id="${escapeAttr(it.id)}">Edit</button>
+                <button type="button" class="edit-action" data-pack-action="move-up" data-section-id="${escapeAttr(l.id)}" data-item-id="${escapeAttr(it.id)}"${index === 0 ? ' disabled' : ''}>↑</button>
+                <button type="button" class="edit-action" data-pack-action="move-down" data-section-id="${escapeAttr(l.id)}" data-item-id="${escapeAttr(it.id)}"${index === l.items.length - 1 ? ' disabled' : ''}>↓</button>
+                <button type="button" class="edit-action danger" data-pack-action="remove-item" data-section-id="${escapeAttr(l.id)}" data-item-id="${escapeAttr(it.id)}">Remove</button>
+                ${(it.locked || it.origin === 'manual') ? '<span class="edit-lock">Manual</span>' : ''}
+              </div>` : ''}
+            </li>`).join('') || '<li class="why">Nothing to add.</li>'}</ul>
           </section>`).join('')}
       </div>
+      ${access.editable ? '<button type="button" class="btn ghost" data-pack-action="add-section">＋ Add packing section</button>' : ''}
       <section class="reminders">
-        <h3>Reminder timeline</h3>
-        <ol>${result.reminders.map(r => `<li><span class="when">${escapeHtml(r.when)}</span><span>${escapeHtml(r.text)}</span></li>`).join('')}</ol>
+        <div class="editable-head"><h3>Reminder timeline</h3>${access.editable ? '<button type="button" class="edit-action" data-pack-action="add-reminder">＋ Add reminder</button>' : ''}</div>
+        <ol>${result.reminders.map(r => `<li><span class="when">${escapeHtml(r.when)}</span><span>${escapeHtml(r.text)}${access.editable ? `<span class="edit-actions"><button type="button" class="edit-action" data-pack-action="edit-reminder" data-reminder-id="${escapeAttr(r.id)}">Edit</button><button type="button" class="edit-action danger" data-pack-action="remove-reminder" data-reminder-id="${escapeAttr(r.id)}">Remove</button></span>` : ''}</span></li>`).join('')}</ol>
       </section>`;
+
+    root.onchange = async (event) => {
+      const input = event.target.closest('[data-pack-action="toggle-item"]');
+      if (!input) return;
+      await commitTripOperations(trip.id, [{
+        type: 'packing.item.update', sectionId: input.dataset.sectionId, itemId: input.dataset.itemId,
+        patch: { checked: input.checked },
+      }]);
+    };
+    root.onclick = async (event) => {
+      const button = event.target.closest('button[data-pack-action]'); if (!button) return;
+      const action = button.dataset.packAction;
+      const section = result.lists.find((candidate) => candidate.id === button.dataset.sectionId);
+      const item = section?.items?.find((candidate) => candidate.id === button.dataset.itemId);
+      const reminder = result.reminders.find((candidate) => candidate.id === button.dataset.reminderId);
+      if (action === 'add-section' || (action === 'edit-section' && section)) {
+        openTripEditor({
+          title: section ? 'Edit packing section' : 'Add packing section',
+          fields: [[
+            { name: 'title', label: 'Section title', value: section?.title || '', required: true },
+            { name: 'tone', label: 'Tone', type: 'select', value: section?.tone || '', options: [
+              { value: '', label: 'Neutral' }, { value: 'good', label: 'Recommended' }, { value: 'warn', label: 'Warning' },
+            ] },
+          ]],
+          onSubmit: (values) => commitTripOperations(trip.id, [section
+            ? { type: 'packing.section.update', sectionId: section.id, patch: values }
+            : { type: 'packing.section.add', section: { ...values, items: [] } }]),
+        }); return;
+      }
+      if (action === 'add-item' || (action === 'edit-item' && item)) {
+        openTripEditor({
+          title: item ? 'Edit packing item' : 'Add packing item',
+          fields: [
+            { name: 'item', label: 'Item', value: item?.item || '', required: true },
+            { name: 'why', label: 'Why it belongs', type: 'textarea', value: item?.why || '' },
+            ...(item ? [{
+              name: 'destinationSectionId', label: 'Move to section', type: 'select', value: section.id,
+              options: result.lists.map((candidate) => ({ value: candidate.id, label: candidate.title || 'Untitled section' })),
+            }] : []),
+          ],
+          onSubmit: (values) => {
+            const operations = [item
+              ? { type: 'packing.item.update', sectionId: section.id, itemId: item.id, patch: { item: values.item, why: values.why } }
+              : { type: 'packing.item.add', sectionId: section.id, item: values }];
+            if (item && values.destinationSectionId && values.destinationSectionId !== section.id) {
+              operations.push({
+                type: 'packing.item.move', fromSectionId: section.id, toSectionId: values.destinationSectionId,
+                itemId: item.id, afterId: '',
+              });
+            }
+            return commitTripOperations(trip.id, operations);
+          },
+        }); return;
+      }
+      if (action === 'remove-section' && section) {
+        if (confirm(`Remove “${section.title}” and its ${section.items.length} item${section.items.length === 1 ? '' : 's'}?`)) {
+          await commitTripOperations(trip.id, [{ type: 'packing.section.remove', sectionId: section.id }]);
+        }
+        return;
+      }
+      if (action === 'remove-item' && item) {
+        await commitTripOperations(trip.id, [{ type: 'packing.item.remove', sectionId: section.id, itemId: item.id }]); return;
+      }
+      if ((action === 'move-up' || action === 'move-down') && item) {
+        const index = section.items.findIndex((candidate) => candidate.id === item.id);
+        const afterId = action === 'move-up' ? (index > 1 ? section.items[index - 2].id : '') : section.items[index + 1]?.id;
+        await commitTripOperations(trip.id, [{
+          type: 'packing.item.move', fromSectionId: section.id, toSectionId: section.id, itemId: item.id, afterId,
+        }]); return;
+      }
+      if (action === 'add-reminder' || (action === 'edit-reminder' && reminder)) {
+        openTripEditor({
+          title: reminder ? 'Edit packing reminder' : 'Add packing reminder',
+          fields: [[
+            { name: 'when', label: 'When', value: reminder?.when || '', required: true },
+            { name: 'text', label: 'Reminder', value: reminder?.text || '', required: true },
+          ]],
+          onSubmit: (values) => commitTripOperations(trip.id, [reminder
+            ? { type: 'packing.reminder.update', reminderId: reminder.id, patch: values }
+            : { type: 'packing.reminder.add', reminder: values }]),
+        }); return;
+      }
+      if (action === 'remove-reminder' && reminder) {
+        await commitTripOperations(trip.id, [{ type: 'packing.reminder.remove', reminderId: reminder.id }]);
+      }
+    };
+  };
+
+  let discoverGenerating = false;
+  const readDiscoverContext = () => {
+    const f = $('#discover-form');
+    return {
+      hours: Number(f.hours.value) || 3,
+      weather: f.weather.value,
+      energy: f.energy.value,
+      party: f.party.value,
+      startingLocation: f.startingLocation.value.trim(),
+      ...(f.latitude.value ? { latitude: Number(f.latitude.value) } : {}),
+      ...(f.longitude.value ? { longitude: Number(f.longitude.value) } : {}),
+    };
+  };
+
+  const generateDiscover = async (event) => {
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip || discoverGenerating) return;
+    const access = tripAccess(trip); if (!access.editable) return;
+    const button = event?.currentTarget || $('#btn-rebuild-discover');
+    discoverGenerating = true; button.disabled = true; button.textContent = 'Finding real places…';
+    $('#discover-output').innerHTML = '<div class="recommendation-empty"><strong>Researching current nearby options…</strong><p>Checking real places, reviews, sources, and directions.</p></div>';
+    try {
+      const result = await auth.request(`trips/${encodeURIComponent(trip.id)}/discover`, {
+        method: 'POST', body: JSON.stringify({ context: readDiscoverContext() }),
+      });
+      await commitTripOperations(trip.id, [{ type: 'discover.session.upsert', session: result.session }]);
+      $('#discover-form').hidden = true;
+    } catch (error) {
+      $('#discover-output').innerHTML = `<div class="recommendation-empty"><strong>Could not refresh real places.</strong><p>${escapeHtml(error.message || error)}</p><button type="button" class="btn ghost" data-retry-discover>Try again</button></div>`;
+      $('#discover-output [data-retry-discover]')?.addEventListener('click', generateDiscover);
+    } finally {
+      discoverGenerating = false; button.disabled = false; button.textContent = 'Get three real plans';
+    }
   };
 
   const renderDiscover = () => {
     const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    const access = tripAccess(trip);
+    const session = trip.discoverSessions?.at(-1);
+    const root = $('#discover-output');
+    if (!session) {
+      root.innerHTML = `<div class="recommendation-empty"><strong>Build three real mini-itineraries near you.</strong><p>Malem will find multiple current options for every place-based step, with reviews, sources, and Google Maps directions.</p>${access.editable ? '<button type="button" class="btn primary" data-start-discover>Find real options</button>' : '<p>This trip has no saved Discover plans yet.</p>'}</div>`;
+      root.querySelector('[data-start-discover]')?.addEventListener('click', generateDiscover);
+      return;
+    }
     const f = $('#discover-form');
-    const ctx = { destination: trip.destination, hours: f.hours.value, weather: f.weather.value, energy: f.energy.value, party: f.party.value };
-    const plans = engine.buildDiscover(ctx, store.profile.load(me.email));
-    const dest = DATA.destinations.find(d => d.key === ctx.destination)?.name || ctx.destination;
-    $('#discover-output').innerHTML = `
-      <p class="hint" style="margin-bottom:1rem;">In ${escapeHtml(dest)} with ${escapeHtml(ctx.hours)}h and ${escapeHtml(ctx.weather)} weather.</p>
+    f.hours.value = String(session.context?.hours || 3);
+    f.weather.value = session.context?.weather || 'clear';
+    f.energy.value = session.context?.energy || 'mid';
+    f.party.value = session.context?.party || 'couple';
+    f.startingLocation.value = session.context?.startingLocation || '';
+    const dest = destMetaFor(trip).name || trip.destination;
+    root.innerHTML = `
+      ${!access.editable ? '<p class="read-only-note">Passenger princess access is view-only. Expand any card to see real options and directions.</p>' : ''}
+      <p class="hint" style="margin-bottom:1rem;">In ${escapeHtml(dest)} with ${escapeHtml(session.context?.hours || 3)}h and ${escapeHtml(session.context?.weather || 'current')} weather. ${session.stale ? 'Using saved results because live research is tight.' : `Checked ${escapeHtml(new Date(session.generatedAt).toLocaleString())}.`}</p>
       <div class="plans">
-        ${plans.map(p => `
-          <article class="plan">
-            <header><h4>${escapeHtml(p.title)}</h4><span class="badge">${escapeHtml(p.badge)}</span></header>
-            <p class="plan-why">${escapeHtml(p.why)}</p>
-            <ol>${p.steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ol>
-          </article>`).join('')}
+        ${(session.plans || []).map((plan) => `
+          <details class="plan" data-plan-id="${escapeAttr(plan.id)}">
+            <summary><header><h4>${escapeHtml(plan.title)}</h4><span class="badge">${escapeHtml(plan.badge)}</span></header><p class="plan-why">${escapeHtml(plan.why)}</p></summary>
+            ${access.editable ? `<div class="edit-actions"><button type="button" class="edit-action" data-discover-action="edit-plan" data-plan-id="${escapeAttr(plan.id)}">Edit plan</button><button type="button" class="edit-action" data-discover-action="add-step" data-plan-id="${escapeAttr(plan.id)}">＋ Add step</button><button type="button" class="edit-action" data-discover-action="add-to-itinerary" data-plan-id="${escapeAttr(plan.id)}">Add to main itinerary</button></div>` : ''}
+            <div class="discover-steps">${(plan.steps || []).map((step, stepIndex) => `
+              <section class="discover-step" data-step-id="${escapeAttr(step.id)}">
+                <div class="editable-head"><div><strong>${escapeHtml(step.title)}</strong>${step.description ? `<p class="hint">${escapeHtml(step.description)}</p>` : ''}</div>${access.editable ? `<div class="edit-actions"><button type="button" class="edit-action" data-discover-action="edit-step" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}">Edit</button><button type="button" class="edit-action" data-discover-action="move-step-up" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}"${stepIndex === 0 ? ' disabled' : ''}>↑</button><button type="button" class="edit-action" data-discover-action="move-step-down" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}"${stepIndex === plan.steps.length - 1 ? ' disabled' : ''}>↓</button><button type="button" class="edit-action" data-discover-action="add-option" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}">＋ Place</button><button type="button" class="edit-action danger" data-discover-action="remove-step" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}">Remove</button></div>` : ''}</div>
+                <div class="discover-options">${(step.options || []).map((option) => {
+                  const selected = option.id === step.selectedOptionId;
+                  return `<article class="discover-option" data-selected="${String(selected)}">
+                    <header><strong>${escapeHtml(option.name)}</strong>${selected ? '<span class="badge">Selected</span>' : ''}</header>
+                    ${option.description ? `<p>${escapeHtml(option.description)}</p>` : ''}
+                    <div class="discover-option-meta">${option.rating != null ? `<span>★ ${Number(option.rating).toFixed(1)}</span>` : ''}${option.reviewCount != null ? `<span>${Number(option.reviewCount).toLocaleString()} reviews</span>` : ''}${option.address ? `<span>${escapeHtml(option.address)}</span>` : ''}${option.checkedAt ? `<span>checked ${escapeHtml(option.checkedAt)}</span>` : ''}</div>
+                    <div class="place-actions">${safeExternalUrl(option.sourceUrl) ? `<a href="${escapeAttr(option.sourceUrl)}" target="_blank" rel="noopener">Source ↗</a>` : ''}${safeExternalUrl(option.reviewsUrl) ? `<a href="${escapeAttr(option.reviewsUrl)}" target="_blank" rel="noopener">Reviews ↗</a>` : ''}${safeExternalUrl(option.directionsUrl) ? `<a href="${escapeAttr(option.directionsUrl)}" target="_blank" rel="noopener">Directions ↗</a>` : ''}</div>
+                    ${access.editable ? `<div class="edit-actions">${!selected ? `<button type="button" class="edit-action" data-discover-action="select-option" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}" data-option-id="${escapeAttr(option.id)}">Choose this</button>` : ''}<button type="button" class="edit-action" data-discover-action="edit-option" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}" data-option-id="${escapeAttr(option.id)}">Edit place</button><button type="button" class="edit-action danger" data-discover-action="remove-option" data-plan-id="${escapeAttr(plan.id)}" data-step-id="${escapeAttr(step.id)}" data-option-id="${escapeAttr(option.id)}">Remove</button></div>` : ''}
+                  </article>`;
+                }).join('')}</div>
+              </section>`).join('')}</div>
+          </details>`).join('')}
       </div>`;
+
+    root.onclick = async (event) => {
+      const button = event.target.closest('button[data-discover-action]'); if (!button) return;
+      const action = button.dataset.discoverAction;
+      const plan = session.plans.find((candidate) => candidate.id === button.dataset.planId);
+      const step = plan?.steps?.find((candidate) => candidate.id === button.dataset.stepId);
+      const option = step?.options?.find((candidate) => candidate.id === button.dataset.optionId);
+      if (action === 'edit-plan' && plan) {
+        openTripEditor({
+          title: 'Edit mini-itinerary',
+          fields: [
+            { name: 'title', label: 'Plan title', value: plan.title, required: true },
+            [{ name: 'badge', label: 'Badge', value: plan.badge }, { name: 'why', label: 'Why this plan works', value: plan.why }],
+          ],
+          onSubmit: (values) => commitTripOperations(trip.id, [{ type: 'discover.plan.update', sessionId: session.id, planId: plan.id, patch: values }]),
+        }); return;
+      }
+      if (action === 'add-step' || (action === 'edit-step' && step)) {
+        openTripEditor({
+          title: step ? 'Edit mini-itinerary step' : 'Add mini-itinerary step',
+          fields: [
+            { name: 'title', label: 'Step title', value: step?.title || '', required: true },
+            { name: 'description', label: 'Short description', type: 'textarea', value: step?.description || '' },
+            { name: 'intent', label: 'Place category', value: step?.intent || '', placeholder: 'market, café, museum…' },
+          ],
+          onSubmit: (values) => commitTripOperations(trip.id, [step
+            ? { type: 'discover.step.update', sessionId: session.id, planId: plan.id, stepId: step.id, patch: values }
+            : { type: 'discover.step.add', sessionId: session.id, planId: plan.id, step: { ...values, options: [] } }]),
+        }); return;
+      }
+      if (action === 'remove-step' && step) {
+        await commitTripOperations(trip.id, [{ type: 'discover.step.remove', sessionId: session.id, planId: plan.id, stepId: step.id }]); return;
+      }
+      if ((action === 'move-step-up' || action === 'move-step-down') && step) {
+        const index = plan.steps.findIndex((candidate) => candidate.id === step.id);
+        const afterId = action === 'move-step-up' ? (index > 1 ? plan.steps[index - 2].id : '') : plan.steps[index + 1]?.id;
+        await commitTripOperations(trip.id, [{ type: 'discover.step.move', sessionId: session.id, planId: plan.id, stepId: step.id, afterId }]); return;
+      }
+      if (action === 'select-option' && step && option) {
+        await commitTripOperations(trip.id, [{ type: 'discover.step.update', sessionId: session.id, planId: plan.id, stepId: step.id, patch: { selectedOptionId: option.id } }]); return;
+      }
+      if ((action === 'add-option' && step) || (action === 'edit-option' && option)) {
+        const current = option || {};
+        openTripEditor({
+          title: option ? 'Edit place option' : 'Add a place option',
+          description: 'Manual places should include a source and directions whenever possible.',
+          fields: [
+            { name: 'name', label: 'Place name', value: current.name || '', required: true },
+            { name: 'description', label: 'Short description', type: 'textarea', value: current.description || '' },
+            { name: 'address', label: 'Address', value: current.address || '' },
+            [{ name: 'rating', label: 'Rating (only if sourced)', type: 'number', min: '0', step: '.1', value: current.rating ?? '' }, { name: 'reviewCount', label: 'Review count', type: 'number', min: '0', value: current.reviewCount ?? '' }],
+            [{ name: 'sourceUrl', label: 'Source URL', type: 'url', value: current.sourceUrl || '' }, { name: 'reviewsUrl', label: 'Reviews URL', type: 'url', value: current.reviewsUrl || '' }],
+            { name: 'directionsUrl', label: 'Directions URL', type: 'url', value: current.directionsUrl || '' },
+          ],
+          onSubmit: (values) => {
+            const edited = {
+              ...current, ...values,
+              id: current.id || `place-${crypto.randomUUID()}`,
+              rating: values.rating === '' ? undefined : Number(values.rating),
+              reviewCount: values.reviewCount === '' ? undefined : Number(values.reviewCount),
+              directionsUrl: values.directionsUrl || makeMapsDirectionsUrl(values),
+              checkedAt: new Date().toISOString().slice(0, 10),
+            };
+            const options = option
+              ? step.options.map((candidate) => candidate.id === option.id ? edited : candidate)
+              : [...step.options, edited].slice(0, 4);
+            return commitTripOperations(trip.id, [{
+              type: 'discover.step.update', sessionId: session.id, planId: plan.id, stepId: step.id,
+              patch: { options, selectedOptionId: step.selectedOptionId || edited.id },
+            }]);
+          },
+        }); return;
+      }
+      if (action === 'remove-option' && step && option) {
+        const options = step.options.filter((candidate) => candidate.id !== option.id);
+        await commitTripOperations(trip.id, [{
+          type: 'discover.step.update', sessionId: session.id, planId: plan.id, stepId: step.id,
+          patch: { options, selectedOptionId: step.selectedOptionId === option.id ? (options[0]?.id || '') : step.selectedOptionId },
+        }]); return;
+      }
+      if (action === 'add-to-itinerary' && plan) {
+        const days = trip.bundle?.itinerary?.days || [];
+        openTripEditor({
+          title: 'Add mini-itinerary to a day',
+          description: 'Each selected real place becomes an editable itinerary activity.',
+          fields: [{ name: 'dayId', label: 'Itinerary day', type: 'select', value: days[0]?.id || '', options: days.map((day, index) => ({ value: day.id, label: `Day ${index + 1} — ${day.theme}` })) }],
+          submitLabel: 'Add selected places',
+          onSubmit: (values) => {
+            const operations = plan.steps.map((planStep) => {
+              const selected = planStep.options.find((candidate) => candidate.id === planStep.selectedOptionId) || planStep.options[0];
+              return { type: 'itinerary.block.add', dayId: values.dayId, block: {
+                time: '', title: selected?.name || planStep.title, duration: '60 min', kind: 'activity',
+                notes: planStep.description, place: selected || undefined, booking: { required: 'unknown' },
+              } };
+            });
+            return commitTripOperations(trip.id, operations);
+          },
+        });
+      }
+    };
   };
 
   const renderLocal = () => {
@@ -3516,23 +4402,50 @@ const ui = (() => {
       </div>`;
   };
 
-  const renderMembers = () => {
-    const me = auth.current(); const members = store.group.load(me.email);
+  const renderMembers = async () => {
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    let envelope = auth.tripEnvelope(trip.id);
+    if (!envelope?.members) {
+      try { envelope = await auth.refreshTrip(trip.id); }
+      catch (error) { $('#members-list').innerHTML = `<li class="hint">${escapeHtml(error.message)}</li>`; return; }
+    }
+    const members = envelope.members || [];
+    const access = tripAccess(trip);
     $('#members-list').innerHTML = members.length ? members.map(m => `
       <li class="member">
         <header>
           <strong>${escapeHtml(m.name)}</strong>
-          <span class="age">${escapeHtml(m.ageBand)}</span>
-          <button class="remove" data-id="${m.id}">Remove</button>
+          <span class="age">${escapeHtml(m.role === 'viewer' ? 'Passenger princess' : m.role)}</span>
+          ${access.owner && m.role !== 'owner' ? `<span class="edit-actions"><button type="button" class="edit-action" data-member-action="role" data-user-id="${escapeAttr(m.userId)}" data-role="${m.role === 'viewer' ? 'collaborator' : 'viewer'}">Make ${m.role === 'viewer' ? 'collaborator' : 'Passenger princess'}</button><button type="button" class="edit-action danger" data-member-action="remove" data-user-id="${escapeAttr(m.userId)}">Remove</button></span>` : ''}
         </header>
-        <div class="cons">${(m.constraints || []).length ? escapeHtml(m.constraints.join(', ')) : '<span class="hint">no personal constraints listed</span>'}</div>
-        ${m.vibe ? `<div class="hint">Prefers: ${escapeHtml(DATA.VIBES.find(v => v.key === m.vibe)?.title || m.vibe)}</div>` : ''}
+        <div class="hint">Joined ${new Date(m.joinedAt).toLocaleDateString()}</div>
       </li>`).join('') : `<li class="hint">No members yet.</li>`;
-    renderTally(members);
+    $('#invite-owner-tools').hidden = !access.owner;
+    $('#vibe-vote-form').hidden = !access.editable;
+    $('#shared-constraints-form').hidden = !access.editable;
+    const myVote = (envelope.votes?.vibes || []).find((vote) => vote.userId === envelope.currentUserId);
+    if (myVote) {
+      $('#vibe-vote-form').primaryVibe.value = myVote.primaryVibe || '';
+      $('#vibe-vote-form').secondaryVibe.value = myVote.secondaryVibe || '';
+    }
+    $('#shared-constraints-form').constraints.value = (trip.collaboration?.sharedConstraints || []).join(', ');
+    renderTally(envelope.votes?.vibes || [], trip.collaboration?.sharedConstraints || []);
+    if (access.owner) {
+      try {
+        const inviteResponse = await auth.request(`trips/${encodeURIComponent(trip.id)}/invites`);
+        const now = Date.now();
+        $('#invite-list').innerHTML = (inviteResponse.invites || []).length ? inviteResponse.invites.map((invite) => `
+          <li class="member"><header><strong>${invite.role === 'viewer' ? 'Passenger princess' : 'Collaborator'} link</strong><span class="age">${invite.revoked_at || invite.revokedAt ? 'Revoked' : Number(invite.expires_at || invite.expiresAt) <= now ? 'Expired' : `${invite.use_count ?? invite.useCount ?? 0}/${invite.max_uses ?? invite.maxUses} used`}</span>${!(invite.revoked_at || invite.revokedAt) ? `<button type="button" class="edit-action danger" data-invite-id="${escapeAttr(invite.id)}">Revoke</button>` : ''}</header><div class="hint">Expires ${new Date(invite.expires_at || invite.expiresAt).toLocaleString()}</div></li>`).join('') : '<li class="hint">No pending invitation links.</li>';
+      } catch (error) { $('#invite-list').innerHTML = `<li class="hint">${escapeHtml(error.message)}</li>`; }
+    }
   };
-  const renderTally = (members) => {
+  const renderTally = (ballots, constraints) => {
     const wrap = $('#vote-tally'); const summary = $('#shared-summary');
-    const { winner, blend, votes } = engine.blendGroupVibes(members);
+    const votes = {};
+    ballots.forEach((ballot) => {
+      votes[ballot.primaryVibe] = (votes[ballot.primaryVibe] || 0) + 1;
+      if (ballot.secondaryVibe) votes[ballot.secondaryVibe] = (votes[ballot.secondaryVibe] || 0) + .5;
+    });
     const rows = Object.entries(votes).sort((a, b) => b[1] - a[1]);
     const total = rows.reduce((n, [, c]) => n + c, 0) || 1;
     wrap.innerHTML = rows.length ? rows.map(([k, c]) => {
@@ -3544,17 +4457,21 @@ const ui = (() => {
           <span class="bar"><span style="width:${pct}%"></span></span>
         </div>`;
     }).join('') : `<p class="hint">Nobody has picked a preferred vibe yet.</p>`;
-    const constraints = engine.consolidateConstraints(members);
-    if (!winner) summary.innerHTML = 'Add members with preferred vibes to see the shared direction.';
+    const winner = rows[0]?.[0] || null;
+    const blend = rows[1]?.[0] || null;
+    if (!winner) summary.innerHTML = `No vibe ballots yet.${constraints.length ? ` Shared requirements: ${escapeHtml(constraints.join(', '))}.` : ''}`;
     else {
       const w = DATA.VIBES.find(v => v.key === winner)?.title || winner;
       const b = blend ? (DATA.VIBES.find(v => v.key === blend)?.title || blend) : null;
-      summary.innerHTML = `Shared vibe: <strong>${escapeHtml(w)}</strong>${b ? ` blended with <strong>${escapeHtml(b)}</strong>` : ''}. Every plan will also respect: ${constraints.length ? escapeHtml(constraints.join(', ')) : 'no group-wide constraints yet'}.`;
+      summary.innerHTML = `Shared vibe: <strong>${escapeHtml(w)}</strong>${b ? ` blended with <strong>${escapeHtml(b)}</strong>` : ''}. Every plan will also respect: ${constraints.length ? escapeHtml(constraints.join(', ')) : 'no shared requirements yet'}.`;
     }
   };
   const renderJournal = () => {
-    const me = auth.current(); const entries = store.journal.load(me.email);
-    $('#journal-list').innerHTML = entries.map(e => `
+    const me = auth.current(); const trip = activeTripFor(me.email); if (!trip) return;
+    const entries = trip.journal || [];
+    const access = tripAccess(trip);
+    $('#journal-form').hidden = !access.editable;
+    $('#journal-list').innerHTML = `${!access.editable ? '<li class="read-only-note">Passenger princess access is view-only.</li>' : ''}${entries.map(e => `
       <li class="entry">
         <h5>${escapeHtml(e.title)}</h5>
         ${e.did    ? `<p><strong>Did.</strong> ${escapeHtml(e.did)}</p>` : ''}
@@ -3564,11 +4481,37 @@ const ui = (() => {
           ${e.dietAccuracy   ? `<span>Dietary: ${escapeHtml(e.dietAccuracy)}</span>`   : ''}
           <span>${e.publicEntry ? 'Public' : 'Private'}</span>
         </div>
-        <div class="entry-actions">
+        ${access.editable ? `<div class="entry-actions">
+          <button type="button" class="text-button" data-journal-action="edit" data-id="${escapeHtml(e.id)}">Edit entry</button>
           <button type="button" class="text-button" data-journal-action="visibility" data-public="${String(Boolean(e.publicEntry))}" data-id="${escapeHtml(e.id)}">${e.publicEntry ? 'Make private' : 'Publish'}</button>
           <button type="button" class="text-button" data-journal-action="remove" data-id="${escapeHtml(e.id)}">Remove entry</button>
-        </div>
-      </li>`).join('');
+        </div>` : ''}
+      </li>`).join('')}`;
+  };
+
+  const renderInviteRoute = async (token) => {
+    activeInviteToken = token;
+    showScreen('invite');
+    $('#invite-screen-title').textContent = 'You’re invited.';
+    $('#invite-screen-lede').textContent = 'Checking this secure invitation…';
+    $('#invite-screen-summary').hidden = true;
+    $('#accept-trip-invite').hidden = true;
+    $('#signin-for-invite').hidden = true;
+    try {
+      const result = await auth.request(`invites/${encodeURIComponent(token)}`);
+      const invite = result.invite;
+      $('#invite-screen-title').textContent = `Join ${invite.tripTitle}.`;
+      $('#invite-screen-lede').textContent = `${invite.inviterName} invited you to the ${invite.destination} trip as ${invite.role === 'viewer' ? 'Passenger princess with view-only access' : 'a collaborator who can edit and vote'}.`;
+      $('#invite-screen-summary').innerHTML = `<div class="cell"><span class="eyebrow">Access</span><p>${invite.role === 'viewer' ? 'View the complete shared plan' : 'Edit, vote, and regenerate together'}</p></div><div class="cell"><span class="eyebrow">Link expires</span><p>${escapeHtml(new Date(invite.expiresAt).toLocaleString())}</p></div>`;
+      $('#invite-screen-summary').hidden = false;
+      $('#accept-trip-invite').hidden = !auth.current();
+      $('#signin-for-invite').hidden = Boolean(auth.current());
+      sessionStorage.setItem('malem.pendingInvite.v1', token);
+    } catch (error) {
+      $('#invite-screen-title').textContent = 'This invite is unavailable.';
+      $('#invite-screen-lede').textContent = error.message || 'It may be expired, revoked, or already used.';
+      sessionStorage.removeItem('malem.pendingInvite.v1');
+    }
   };
 
   // Route handler for signed-in dashboard
@@ -3606,6 +4549,10 @@ const ui = (() => {
   };
 
   const route = () => {
+    if ((location.hash || '').startsWith('#/invite/')) {
+      const token = decodeURIComponent((location.hash || '').slice('#/invite/'.length).split('?')[0]);
+      renderInviteRoute(token); return;
+    }
     // Public community is always accessible
     if ((location.hash || '').startsWith('#/community')) {
       renderCommunity(); showScreen('public'); return;

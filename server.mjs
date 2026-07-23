@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { onRequestGet as searchFashionImages } from './functions/api/pinterest.js';
 import { onRequestGet as proxyFashionImage } from './functions/api/image.js';
 import { createLocalAuthService } from './lib/local-auth-service.mjs';
+import { discoverPlaces } from './lib/place-service.mjs';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
 // Node's built-in --env-file flag is not available in every runtime used for
@@ -34,6 +35,12 @@ const appTitle = process.env.OPENROUTER_APP_TITLE || 'malem';
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const authService = await createLocalAuthService({
   dataFile: process.env.MALEM_DATA_FILE || resolve(root, '.malem-data', 'accounts.json'),
+  discoverProvider: (options) => discoverPlaces({
+    ...options,
+    googleApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+    openRouterApiKey: openRouterKey,
+    openRouterBaseUrl,
+  }),
 });
 const ALLOWED_MODELS = new Set([
   'openai/gpt-5.6-luna',
@@ -53,6 +60,7 @@ const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -62,7 +70,7 @@ const mimeTypes = {
 };
 const staticSecurityHeaders = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.openai.com https://api.anthropic.com https://api.open-meteo.com https://geocoding-api.open-meteo.com https://www.googleapis.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self)',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -177,7 +185,7 @@ const serveStatic = async (pathname, res) => {
 
 createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  if (/^\/api\/(?:health|community|signup|login|logout|account|me|state)\/?$/.test(url.pathname)) {
+  if (/^\/api\/(?:health|community|signup|login|logout|account|me|state|trips(?:\/.*)?|invites(?:\/.*)?)\/?$/.test(url.pathname)) {
     const request = new Request(url, {
       method: req.method,
       headers: req.headers,

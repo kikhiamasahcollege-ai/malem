@@ -36,8 +36,8 @@ test('degraded mode keeps trip planning and destination panels functional', asyn
   assert.match(app, /General fallback — verify locally/);
   assert.match(app, /Independent neighborhood café/);
   assert.doesNotMatch(app, /new RegExp\('\^\(\[a-z\]\[a-z \.\\\\\\'-\]\{1,48\}\?\)'/);
-  assert.match(app, /const customized = Boolean\(req\)/);
-  assert.match(app, /if \(!customized && trip\?\.bundle\?\.packing/);
+  assert.match(app, /type: 'packing\.replace'/);
+  assert.match(app, /Saved on this device\. Malem will retry/);
   assert.match(app, /const selectedMix = new Set\(ctx\.mix/);
 });
 
@@ -69,7 +69,7 @@ test('local and Cloudflare servers expose the complete identity/state contract',
 
 test('deployment excludes secrets, development data, and test-only files from static assets', async () => {
   const ignored = await read('../.assetsignore');
-  for (const path of ['.env', '.malem-data/', 'server.mjs', 'lib/', 'tests/', 'docs/', 'schema.sql']) {
+  for (const path of ['.env', '.malem-data/', 'server.mjs', 'lib/local-auth-service.mjs', 'lib/place-service.mjs', 'migrations/', 'tests/', 'docs/', 'schema.sql']) {
     assert.match(ignored, new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
   }
 });
@@ -78,7 +78,7 @@ test('deployment applies browser security headers', async () => {
   const headers = await read('../_headers');
   assert.match(headers, /Content-Security-Policy:/);
   assert.match(headers, /frame-ancestors 'none'/);
-  assert.match(headers, /Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(\)/);
+  assert.match(headers, /Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(self\)/);
   assert.match(headers, /X-Content-Type-Options: nosniff/);
   assert.match(headers, /X-Frame-Options: DENY/);
 });

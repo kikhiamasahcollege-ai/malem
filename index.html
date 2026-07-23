@@ -6,10 +6,14 @@
 <title>malem — travel that understands you</title>
 <meta name="description" content="Tell malem where you're heading. It plans the trip — itinerary, outfits, packing, and cultural prep — shaped by who you are." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="./styles.css?v=20260721-8" />
+  <link rel="stylesheet" href="./styles.css?v=20260722-10" />
 </head>
 <body>
 <div class="global-status" id="global-status" role="status" aria-live="polite"></div>
+<div class="trip-save-banner" id="trip-save-banner" role="status" aria-live="polite" hidden>
+  <span id="trip-save-message"></span>
+  <button type="button" class="text-button" id="trip-undo" hidden>Undo</button>
+</div>
 
 <!-- 1. AUTH GATE -->
 <section class="gate" id="screen-auth" hidden>
@@ -56,6 +60,22 @@
       <a href="./privacy.html">Privacy</a> · <a href="./terms.html">Terms</a>
     </p>
   </form>
+</section>
+
+<!-- 1a. SECURE TRIP INVITATION -->
+<section class="gate" id="screen-invite" hidden>
+  <div class="gate-card">
+    <div class="brand"><span class="dot" aria-hidden="true"></span><span>malem</span><span class="tag">Trip invite</span></div>
+    <h1 id="invite-screen-title">You’re invited.</h1>
+    <p class="lede" id="invite-screen-lede">Loading this secure invitation…</p>
+    <div class="summary" id="invite-screen-summary" hidden></div>
+    <div class="form-actions">
+      <button type="button" class="btn primary" id="accept-trip-invite" hidden>Join this trip</button>
+      <button type="button" class="btn primary" id="signin-for-invite" hidden>Sign in or create an account</button>
+      <a href="#/chat" class="btn ghost" id="decline-trip-invite">Not now</a>
+    </div>
+    <p class="save-note" id="invite-screen-note" aria-live="polite"></p>
+  </div>
 </section>
 
 <!-- 1b. PUBLIC COMMUNITY -->
@@ -337,8 +357,18 @@
               <option value="friends">Friends</option>
             </select>
           </label>
+          <label class="field">
+            <span>Starting location</span>
+            <input type="text" name="startingLocation" placeholder="Neighborhood, hotel, or landmark" />
+          </label>
         </div>
-        <div><button type="button" class="btn primary" id="btn-rebuild-discover">Get three plans</button></div>
+        <input type="hidden" name="latitude" />
+        <input type="hidden" name="longitude" />
+        <div class="conn-actions">
+          <button type="button" class="btn ghost" id="use-discover-location">Use my location</button>
+          <button type="button" class="btn primary" id="btn-rebuild-discover">Get three real plans</button>
+          <span class="save-note" id="discover-location-note" aria-live="polite"></span>
+        </div>
       </form>
 
       <div id="discover-output"></div>
@@ -397,57 +427,41 @@
       <div class="group-grid">
         <section>
           <h3 class="subhead">Trip members</h3>
-          <p class="hint">Add yourself and companions.</p>
+          <p class="hint">Real travelers with server-enforced access to this trip.</p>
           <ul id="members-list" class="members"></ul>
-
-          <form id="member-form" class="stack" style="margin-top:1rem;">
-            <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
-              <label class="field">
-                <span>Name</span>
-                <input type="text" name="name" placeholder="Amina" required />
-              </label>
-              <label class="field">
-                <span>Age band</span>
-                <select name="ageBand">
-                  <option value="adult" selected>Adult</option>
-                  <option value="teen">Teen</option>
-                  <option value="child">Child (5–12)</option>
-                  <option value="toddler">Toddler / baby</option>
-                  <option value="senior">Senior</option>
-                </select>
-              </label>
-            </div>
-            <label class="field">
-              <span>Constraints (comma-separated)</span>
-              <input type="text" name="constraints" placeholder="halal, step-free, medication reminders…" />
-            </label>
-            <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
-              <label class="field">
-                <span>Preferred vibe</span>
-                <select name="vibe">
-                  <option value="">(no strong pref)</option>
-                  <option value="live-like-local">Live like a local</option>
-                  <option value="iconic-first-visit">Iconic first visit</option>
-                  <option value="relaxed-scenic">Relaxed &amp; scenic</option>
-                  <option value="hidden-gems">Hidden gems</option>
-                  <option value="family-adventure">Family adventure</option>
-                  <option value="halal-food-culture">Halal food &amp; culture</option>
-                  <option value="luxury-without-rush">Luxury without rush</option>
-                </select>
-              </label>
-              <div class="field">
-                <span>&nbsp;</span>
-                <button type="button" class="btn ghost" id="add-member">Add member</button>
+          <div id="invite-owner-tools" class="stack" style="margin-top:1rem;">
+            <h4>Invite a travel buddy</h4>
+            <form id="invite-form" class="stack">
+              <div style="display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+                <label class="field"><span>Access</span><select name="role"><option value="collaborator">Collaborator — can edit</option><option value="viewer">Passenger princess — view only</option></select></label>
+                <label class="field"><span>Expires</span><select name="expiresInDays"><option value="1">In 1 day</option><option value="7" selected>In 7 days</option><option value="30">In 30 days</option></select></label>
+                <label class="field"><span>Uses</span><input type="number" name="maxUses" min="1" max="50" value="1" /></label>
               </div>
+              <div><button type="submit" class="btn primary">Create secure share link</button></div>
+            </form>
+            <div id="invite-result" class="invite-result" hidden>
+              <label class="field"><span>Share link</span><input type="url" id="invite-url" readonly /></label>
+              <div class="conn-actions"><button type="button" class="btn ghost" id="copy-invite">Copy link</button><button type="button" class="btn ghost" id="share-invite">Share</button><a class="btn ghost" id="text-invite" href="#">Send by text</a></div>
             </div>
-          </form>
+            <p class="save-note" id="invite-note" aria-live="polite"></p>
+            <ul id="invite-list" class="members"></ul>
+          </div>
         </section>
 
         <section>
           <h3 class="subhead">Shared vibe</h3>
-          <p class="hint">Emerges from the votes.</p>
+          <p class="hint">Each collaborator votes from their own account. The result becomes generation context.</p>
+          <form id="vibe-vote-form" class="stack" style="margin:1rem 0;">
+            <label class="field"><span>My primary vibe</span><select name="primaryVibe" required><option value="">Choose one</option><option value="live-like-local">Live like a local</option><option value="iconic-first-visit">Iconic first visit</option><option value="relaxed-scenic">Relaxed &amp; scenic</option><option value="hidden-gems">Hidden gems</option><option value="family-adventure">Family adventure</option><option value="halal-food-culture">Halal food &amp; culture</option><option value="luxury-without-rush">Luxury without rush</option></select></label>
+            <label class="field"><span>Optional secondary vibe</span><select name="secondaryVibe"><option value="">No secondary vibe</option><option value="live-like-local">Live like a local</option><option value="iconic-first-visit">Iconic first visit</option><option value="relaxed-scenic">Relaxed &amp; scenic</option><option value="hidden-gems">Hidden gems</option><option value="family-adventure">Family adventure</option><option value="halal-food-culture">Halal food &amp; culture</option><option value="luxury-without-rush">Luxury without rush</option></select></label>
+            <button type="submit" class="btn ghost">Save my vote</button>
+          </form>
           <div id="vote-tally" class="tally"></div>
           <div id="shared-summary" class="shared-summary"></div>
+          <form id="shared-constraints-form" class="stack" style="margin-top:1rem;">
+            <label class="field"><span>Shared trip requirements</span><textarea name="constraints" rows="3" placeholder="halal meals, step-free routes, early evenings…"></textarea></label>
+            <button type="submit" class="btn ghost">Save shared requirements</button>
+          </form>
         </section>
       </div>
 
@@ -900,6 +914,25 @@
   </div>
 </aside>
 
-<script src="./app.js?v=20260721-8"></script>
+<dialog class="trip-editor" id="trip-editor" aria-labelledby="trip-editor-title">
+  <form method="dialog" id="trip-editor-form" class="stack">
+    <div class="trip-editor-head">
+      <div>
+        <span class="eyebrow">Manual edit</span>
+        <h2 id="trip-editor-title">Edit trip</h2>
+      </div>
+      <button type="button" class="close-x" id="trip-editor-close" aria-label="Close editor">Close</button>
+    </div>
+    <p class="hint" id="trip-editor-description"></p>
+    <div class="trip-editor-fields" id="trip-editor-fields"></div>
+    <div class="trip-editor-actions">
+      <button type="button" class="btn ghost" id="trip-editor-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="trip-editor-submit">Save change</button>
+    </div>
+    <p class="save-note" id="trip-editor-note" aria-live="polite"></p>
+  </form>
+</dialog>
+
+<script type="module" src="./app.js?v=20260722-10"></script>
 </body>
 </html>

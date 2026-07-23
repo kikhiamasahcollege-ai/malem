@@ -8,7 +8,9 @@
 wrangler.toml
 schema.sql
 server.mjs
-lib/
+lib/local-auth-service.mjs
+lib/place-service.mjs
+migrations/
 tests/
 docs/
 .assetsignore
