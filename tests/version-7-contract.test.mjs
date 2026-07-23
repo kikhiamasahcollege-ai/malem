@@ -46,14 +46,17 @@ test('degraded mode keeps trip planning and destination panels functional', asyn
 });
 
 test('OpenRouter proxy caps request frequency, body size, and tool surface', async () => {
-  const [shared, proxy] = await Promise.all([
+  const [shared, proxy, app] = await Promise.all([
     read('../functions/api/openrouter/_shared.js'),
     read('../functions/api/openrouter/chat/completions.js'),
+    read('../app.js'),
   ]);
   assert.match(shared, /MAX_REQUESTS_PER_WINDOW = 18/);
   assert.match(proxy, /MAX_REQUEST_BYTES = 160_000/);
   assert.match(proxy, /MAX_MESSAGE_BYTES = 120_000/);
-  assert.match(proxy, /tool\?\.type !== 'web_search'/);
+  assert.match(proxy, /tool\.type !== 'openrouter:web_search'/);
+  assert.match(proxy, /max_total_results/);
+  assert.match(app, /type: 'openrouter:web_search'/);
   assert.match(proxy, /planning request cap/i);
 });
 
