@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PRODUCTION_MIGRATIONS,
@@ -11,6 +18,34 @@ import {
 } from '../scripts/production-release.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+const baselineRef = process.env.MALEM_BASELINE_REF
+  || 'origin/claude/travel-profile-itinerary-7a08ju';
+
+const run = (command, args, { input } = {}) => {
+  const result = spawnSync(command, args, {
+    cwd: root,
+    encoding: 'utf8',
+    input,
+  });
+  assert.equal(
+    result.status,
+    0,
+    [result.stdout, result.stderr].filter(Boolean).join('\n'),
+  );
+  return result.stdout || '';
+};
+
+const schemaRows = (database) => JSON.parse(run('sqlite3', [
+  '-json',
+  database,
+  `SELECT type AS kind, name, sql
+     FROM sqlite_master
+    WHERE type IN ('table', 'index')
+   UNION ALL
+   SELECT 'column' AS kind, m.name || '.' || p.name AS name, '' AS sql
+     FROM sqlite_master AS m, pragma_table_info(m.name) AS p
+    WHERE m.type = 'table';`,
+]));
 
 const rowsForMarkers = (markers) => {
   const rows = [];
@@ -82,6 +117,37 @@ test('failed table swaps and missing trailing indexes are always partial', () =>
     ...inviteMigration.requirements,
   ]));
   assert.equal(classifyMigration(inviteMigration, interruptedSwap), 'partial');
+});
+
+test('actual V7 and V8 SQLite schemas classify as a complete migration sequence', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'malem-production-release-test-'));
+  const baselineDatabase = join(directory, 'v7.sqlite');
+  const migratedDatabase = join(directory, 'v8.sqlite');
+
+  try {
+    const baselineSchema = run('git', ['show', `${baselineRef}:schema.sql`]);
+    run('sqlite3', [baselineDatabase], { input: baselineSchema });
+    run('sqlite3', [migratedDatabase], { input: baselineSchema });
+
+    const baselineState = schemaStateFromRows(schemaRows(baselineDatabase));
+    assert.deepEqual(
+      PRODUCTION_MIGRATIONS.map((migration) => classifyMigration(migration, baselineState)),
+      ['pending', 'pending', 'pending', 'pending', 'pending'],
+    );
+
+    for (const migration of PRODUCTION_MIGRATIONS) {
+      run('sqlite3', [migratedDatabase], {
+        input: readFileSync(new URL(`../${migration.file}`, import.meta.url), 'utf8'),
+      });
+    }
+    const migratedState = schemaStateFromRows(schemaRows(migratedDatabase));
+    assert.deepEqual(
+      PRODUCTION_MIGRATIONS.map((migration) => classifyMigration(migration, migratedState)),
+      ['applied', 'applied', 'applied', 'applied', 'applied'],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('schema markers are case-insensitive and inspect table definitions', () => {
