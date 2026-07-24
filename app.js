@@ -52,6 +52,7 @@ const store = (() => {
 
   const emptyProfile = () => ({
     version: 1,
+    onboardingCompleted: false,
     vibes: [], budget: 'mid', pace: 'balanced',
     // Keep existing profiles on the women's setting that was used in the
     // product brief; this is explicit, editable preference—not inference.
@@ -215,6 +216,12 @@ const store = (() => {
       load: (e) => ({ ...emptyProfile(), ...(readJSON(K.profile(e), {}) || {}) }),
       save: (e, v) => { localStorage.setItem(K.profile(e), JSON.stringify(v)); notifySync(e); },
       clear: (e) => { localStorage.removeItem(K.profile(e)); notifySync(e); },
+      needsOnboarding: (e) => {
+        const saved = readJSON(K.profile(e), null);
+        // Profiles created before onboarding existed count as complete. A new
+        // account has no saved profile and resumes here until the survey saves.
+        return !saved || saved.onboardingCompleted === false;
+      },
     },
     trips, activeTrip, migrate,
     group:  {
@@ -2576,7 +2583,7 @@ const ui = (() => {
   };
 
   const showScreen = (name) => {
-    ['auth','invite','app','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
+    ['auth','onboarding','invite','app','public'].forEach(s => { $('#screen-' + s).hidden = s !== name; });
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
@@ -2617,11 +2624,14 @@ const ui = (() => {
       form.setAttribute('aria-busy', 'true');
       flash('#auth-note', authMode === 'signup' ? 'Creating your account…' : 'Signing you in…');
       try {
-        if (authMode === 'signup') await auth.signup(form.name.value, form.email.value, form.password.value);
+        const isSignup = authMode === 'signup';
+        if (isSignup) await auth.signup(form.name.value, form.email.value, form.password.value);
         else await auth.signin(form.email.value, form.password.value);
         form.reset();
         const pendingInvite = sessionStorage.getItem('malem.pendingInvite.v1');
-        location.hash = pendingInvite ? `#/invite/${encodeURIComponent(pendingInvite)}` : '#/chat';
+        location.hash = pendingInvite
+          ? `#/invite/${encodeURIComponent(pendingInvite)}`
+          : (isSignup ? '#/onboarding' : '#/chat');
         route();
       } catch (err) { flash('#auth-note', err.message || 'Something went wrong.'); }
       finally {
@@ -3012,27 +3022,28 @@ const ui = (() => {
     }).join('');
   };
 
-  // ---- Profile sheet ----
+  // ---- Profile survey + sheet ----
+  let profileFormMode = 'sheet';
   const readProfileForm = () => {
     const f = $('#profile-form'); const p = store.emptyProfile();
-    p.vibes = $$('[data-chips="vibes"] input:checked').map(i => i.value);
+    p.vibes = $$('[data-chips="vibes"] input:checked', f).map(i => i.value);
     p.budget = f.budget.value; p.pace = f.pace.value;
     p.wardrobePresentation = f.wardrobePresentation.value || 'women';
     p.styleAgeBand = f.styleAgeBand.value || 'adult';
-    p.dietary.halal      = $('[data-diet="halal"]').checked;
-    p.dietary.kosher     = $('[data-diet="kosher"]').checked;
-    p.dietary.vegan      = $('[data-diet="vegan"]').checked;
-    p.dietary.vegetarian = $('[data-diet="vegetarian"]').checked;
-    p.dietary.glutenFree = $('[data-diet="glutenFree"]').checked;
+    p.dietary.halal      = $('[data-diet="halal"]', f).checked;
+    p.dietary.kosher     = $('[data-diet="kosher"]', f).checked;
+    p.dietary.vegan      = $('[data-diet="vegan"]', f).checked;
+    p.dietary.vegetarian = $('[data-diet="vegetarian"]', f).checked;
+    p.dietary.glutenFree = $('[data-diet="glutenFree"]', f).checked;
     p.dietary.allergies  = parseList(f.allergies.value);
     p.dietary.other      = f.dietOther.value.trim();
-    p.accessibility.stepFree      = $('[data-access="stepFree"]').checked;
-    p.accessibility.lowVision     = $('[data-access="lowVision"]').checked;
-    p.accessibility.lowHearing    = $('[data-access="lowHearing"]').checked;
-    p.accessibility.seatingBreaks = $('[data-access="seatingBreaks"]').checked;
+    p.accessibility.stepFree      = $('[data-access="stepFree"]', f).checked;
+    p.accessibility.lowVision     = $('[data-access="lowVision"]', f).checked;
+    p.accessibility.lowHearing    = $('[data-access="lowHearing"]', f).checked;
+    p.accessibility.seatingBreaks = $('[data-access="seatingBreaks"]', f).checked;
     p.accessibility.notes         = f.accessNotes.value.trim();
     p.religiousCultural = f.religiousCultural.value.trim();
-    p.modesty = ($('input[name="modesty"]:checked') || {}).value || 'no-preference';
+    p.modesty = ($('input[name="modesty"]:checked', f) || {}).value || 'no-preference';
     p.medical.devices         = f.medDevices.value.trim();
     p.medical.medications     = f.medMedications.value.trim();
     p.medical.reminderCadence = f.medCadence.value;
@@ -3044,24 +3055,24 @@ const ui = (() => {
   };
   const writeProfileForm = (p) => {
     const f = $('#profile-form');
-    $$('[data-chips="vibes"] input').forEach(i => { i.checked = (p.vibes || []).includes(i.value); });
+    $$('[data-chips="vibes"] input', f).forEach(i => { i.checked = (p.vibes || []).includes(i.value); });
     f.budget.value = p.budget || 'mid'; f.pace.value = p.pace || 'balanced';
     f.wardrobePresentation.value = p.wardrobePresentation || 'women';
     f.styleAgeBand.value = p.styleAgeBand || 'adult';
-    $('[data-diet="halal"]').checked      = !!p.dietary.halal;
-    $('[data-diet="kosher"]').checked     = !!p.dietary.kosher;
-    $('[data-diet="vegan"]').checked      = !!p.dietary.vegan;
-    $('[data-diet="vegetarian"]').checked = !!p.dietary.vegetarian;
-    $('[data-diet="glutenFree"]').checked = !!p.dietary.glutenFree;
+    $('[data-diet="halal"]', f).checked      = !!p.dietary.halal;
+    $('[data-diet="kosher"]', f).checked     = !!p.dietary.kosher;
+    $('[data-diet="vegan"]', f).checked      = !!p.dietary.vegan;
+    $('[data-diet="vegetarian"]', f).checked = !!p.dietary.vegetarian;
+    $('[data-diet="glutenFree"]', f).checked = !!p.dietary.glutenFree;
     f.allergies.value = (p.dietary.allergies || []).join(', ');
     f.dietOther.value = p.dietary.other || '';
-    $('[data-access="stepFree"]').checked      = !!p.accessibility.stepFree;
-    $('[data-access="lowVision"]').checked     = !!p.accessibility.lowVision;
-    $('[data-access="lowHearing"]').checked    = !!p.accessibility.lowHearing;
-    $('[data-access="seatingBreaks"]').checked = !!p.accessibility.seatingBreaks;
+    $('[data-access="stepFree"]', f).checked      = !!p.accessibility.stepFree;
+    $('[data-access="lowVision"]', f).checked     = !!p.accessibility.lowVision;
+    $('[data-access="lowHearing"]', f).checked    = !!p.accessibility.lowHearing;
+    $('[data-access="seatingBreaks"]', f).checked = !!p.accessibility.seatingBreaks;
     f.accessNotes.value = p.accessibility.notes || '';
     f.religiousCultural.value = p.religiousCultural || '';
-    const mod = $(`input[name="modesty"][value="${p.modesty || 'no-preference'}"]`); if (mod) mod.checked = true;
+    const mod = $(`input[name="modesty"][value="${p.modesty || 'no-preference'}"]`, f); if (mod) mod.checked = true;
     f.medDevices.value     = p.medical.devices || '';
     f.medMedications.value = p.medical.medications || '';
     f.medCadence.value     = p.medical.reminderCadence || 'none';
@@ -3070,18 +3081,64 @@ const ui = (() => {
     f.familyNotes.value = p.family.notes || '';
     f.avoid.value = (p.avoid || []).join(', ');
   };
+  const configureProfileForm = (mode) => {
+    profileFormMode = mode;
+    const onboarding = mode === 'onboarding';
+    $('#save-profile').textContent = onboarding ? 'Save preferences & start planning' : 'Save profile';
+    $('#reset-profile').hidden = onboarding;
+    $('#save-note').textContent = '';
+  };
+  const showProfileOnboarding = () => {
+    const me = auth.current(); if (!me) return;
+    const form = $('#profile-form');
+    const host = $('#onboarding-profile-host');
+    const entering = !host.contains(form);
+    host.append(form);
+    configureProfileForm('onboarding');
+    if (entering) writeProfileForm(store.profile.load(me.email));
+    showScreen('onboarding');
+  };
+  const initProfileForm = () => {
+    $('#profile-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const me = auth.current(); if (!me) return;
+      const button = $('#save-profile');
+      const completesOnboarding = profileFormMode === 'onboarding';
+      const profile = {
+        ...readProfileForm(),
+        onboardingCompleted: completesOnboarding || !store.profile.needsOnboarding(me.email),
+        onboardingCompletedAt: completesOnboarding ? new Date().toISOString() : store.profile.load(me.email).onboardingCompletedAt,
+      };
+      button.disabled = true;
+      store.profile.save(me.email, profile);
+      if (completesOnboarding) {
+        flash('#save-note', 'Saving your preferences…');
+        await auth.flush();
+        location.hash = '#/chat';
+        route();
+        flash('#global-status', 'Your travel profile is ready. Tell Malem where you’re heading.');
+      } else {
+        flash('#save-note', 'Saved.');
+      }
+      button.disabled = false;
+    });
+    $('#reset-profile').addEventListener('click', () => {
+      const me = auth.current(); if (!me) return;
+      if (!confirm('Reset all profile preferences to their defaults on every signed-in device?')) return;
+      const blank = { ...store.emptyProfile(), onboardingCompleted: true, onboardingCompletedAt: new Date().toISOString() };
+      store.profile.save(me.email, blank);
+      writeProfileForm(blank);
+      flash('#save-note', 'Profile reset to defaults.');
+    });
+  };
   const openProfileSheet = () => {
     const me = auth.current(); if (!me) return;
+    $('#profile-sheet-host').append($('#profile-form'));
+    configureProfileForm('sheet');
     writeProfileForm(store.profile.load(me.email));
     $('#sheet-profile').hidden = false;
     const close = () => $('#sheet-profile').hidden = true;
     $$('#sheet-profile [data-close-sheet]').forEach(el => el.addEventListener('click', close, { once: true }));
-    $('#save-profile').onclick = () => { store.profile.save(me.email, readProfileForm()); flash('#save-note', 'Saved.'); };
-    $('#reset-profile').onclick = () => {
-      if (!confirm('Clear your saved profile on every signed-in device?')) return;
-      store.profile.clear(me.email); writeProfileForm(store.emptyProfile());
-      flash('#save-note', 'Profile cleared.');
-    };
   };
 
   // ---- Settings sheet (connected accounts) ----
@@ -3268,6 +3325,19 @@ const ui = (() => {
     $('#btn-profile').addEventListener('click', openProfileSheet);
     $('#btn-settings').addEventListener('click', openSettings);
     $('#btn-signout').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await auth.signout();
+        location.hash = '#/auth';
+        route();
+      } catch (error) {
+        flash('#global-status', error.message || 'Could not sign out. Please try again.');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    $('#onboarding-signout').addEventListener('click', async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
       try {
@@ -4615,6 +4685,13 @@ const ui = (() => {
     // Migrate legacy single-trip storage
     store.migrate(me.email);
 
+    if (store.profile.needsOnboarding(me.email)) {
+      if (location.hash !== '#/onboarding') history.replaceState(null, '', '#/onboarding');
+      showProfileOnboarding();
+      return;
+    }
+    if (location.hash === '#/onboarding') history.replaceState(null, '', '#/chat');
+
     // Signed in — always land in the app shell. Chat page if no active trip, else routed page.
     if (!location.hash || location.hash === '#/auth') {
       const trip = activeTripFor(me.email);
@@ -4632,6 +4709,7 @@ const ui = (() => {
       initAuth();
       initChat();
       initPublic();
+      initProfileForm();
       initApp();
       autosizeTextarea();
       window.addEventListener('malem:sync-error', (event) => {

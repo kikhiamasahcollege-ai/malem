@@ -240,6 +240,67 @@ textarea {
 
 .save-note { color: var(--ink-3); font-size: .85rem; }
 
+/* --- First-run profile survey --- */
+.profile-onboarding {
+  min-height: 100dvh;
+  background: var(--bg);
+}
+.profile-onboarding[hidden] { display: none; }
+.profile-onboarding-top {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 1rem clamp(1.25rem, 4vw, 3.5rem);
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+.profile-onboarding-top .brand {
+  display: flex; align-items: baseline; gap: .5rem;
+  font-family: var(--font-serif); font-size: 1.4rem;
+}
+.profile-onboarding-top .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ink);
+  transform: translateY(-.15em);
+}
+.profile-onboarding-top .tag {
+  margin-left: .35rem; color: var(--ink-3);
+  font-family: var(--font-sans); font-size: .68rem;
+  letter-spacing: .2em; text-transform: uppercase;
+}
+.profile-onboarding-main {
+  width: min(780px, calc(100% - 2.5rem));
+  margin: 0 auto;
+  padding: clamp(3rem, 7vw, 5.5rem) 0 5rem;
+}
+.profile-onboarding-intro {
+  padding-bottom: 2rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.profile-onboarding-intro .eyebrow { display: block; margin-bottom: .8rem; }
+.profile-onboarding-intro h1 { margin-bottom: .75rem; }
+.profile-onboarding-intro .kicker {
+  max-width: 52ch; color: var(--ink-2);
+  font-family: var(--font-serif); font-size: 1.2rem;
+  margin-bottom: .75rem;
+}
+.profile-form .fieldset {
+  border: 0; padding: 0; margin: 2rem 0 0; display: grid; gap: .75rem;
+}
+.profile-form .fieldset > legend {
+  padding: 0; font-family: var(--font-serif); font-size: 1.15rem; margin-bottom: .35rem;
+}
+.profile-form .fieldset.two-col {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.profile-form .fieldset.two-col > legend { grid-column: 1 / -1; }
+.profile-onboarding .sheet-actions {
+  position: sticky; bottom: 0; z-index: 5;
+  margin-top: 2.5rem; padding: 1rem 0;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--hairline);
+}
+
 /* --- Dashboard shell: sidebar + main --- */
 .dash {
   display: grid;
@@ -662,10 +723,6 @@ textarea {
 }
 .sheet-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 1rem; }
 .sheet-head h2 { font-family: var(--font-serif); }
-.sheet .fieldset { border: 0; padding: 0; margin: 1.75rem 0 0; display: grid; gap: .75rem; }
-.sheet .fieldset > legend { padding: 0; font-family: var(--font-serif); font-size: 1.15rem; margin-bottom: .35rem; }
-.sheet .fieldset.two-col { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
-.sheet .fieldset.two-col > legend { grid-column: 1 / -1; }
 .sheet-actions {
   display: flex; gap: .5rem; margin-top: 2rem;
   position: sticky; bottom: 0; padding: 1rem 0;

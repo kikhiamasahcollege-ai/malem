@@ -69,6 +69,23 @@ test('production markup requires release-grade passwords and has no nested label
   assert.match(html, /id="global-status" role="status"/);
 });
 
+test('new accounts complete a synced profile survey before trip planning', async () => {
+  const [html, app] = await Promise.all([
+    read('../index.html'),
+    read('../app.js'),
+  ]);
+  assert.match(html, /id="screen-onboarding"/);
+  assert.match(html, /Tell Malem how you travel/);
+  assert.match(html, /id="onboarding-profile-host"/);
+  assert.match(html, /Save preferences &amp; start planning|id="save-profile"/);
+  assert.match(app, /onboardingCompleted:\s*false/);
+  assert.match(app, /needsOnboarding/);
+  assert.match(app, /isSignup \? '#\/onboarding' : '#\/chat'/);
+  assert.match(app, /onboardingCompleted:\s*completesOnboarding/);
+  assert.match(app, /await auth\.flush\(\)/);
+  assert.match(app, /showProfileOnboarding\(\)/);
+});
+
 test('local and Cloudflare servers expose the complete identity/state contract', async () => {
   const [local, cloudflare, schema] = await Promise.all([
     read('../server.mjs'),
