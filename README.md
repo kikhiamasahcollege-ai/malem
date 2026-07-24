@@ -4,7 +4,8 @@ A travel companion that understands who you are, gives you several ways to
 experience a destination, prepares you for the trip, and adapts your plans in
 real time.
 
-**Status:** Version 7 deployed at [malemtravel.com](https://malemtravel.com).
+**Status:** Version 8 planning studio implemented locally; Version 7 remains
+the current production deployment at [malemtravel.com](https://malemtravel.com).
 
 ## What's here
 
@@ -12,10 +13,22 @@ real time.
   trip chat, itinerary, full-outfit inspiration, packing, cultural preparation,
   Discover Now, local guidance, group voting, public journal, profile, and
   settings flows.
+- `v8-workspace.js` / `v8-workspace.css` — the integrated planning studio for
+  trips, events, and flexible general plans, each available with or without AI,
+  including modular scheduling,
+  bookings, ticket wallet, private visual closet, reusable packing templates,
+  Visionary boards, tasks, people, date polls, budgets, expense splits,
+  settlements, reminders, and calendar/payment handoffs.
+- `lib/plan-contract.mjs` — Plan Document V3 normalization, compatibility,
+  roles/capabilities, module configuration, and revision-safe operations.
 - `server.mjs` — matching local auth/state, OpenRouter, fashion-search, and
   image-proxy API.
 - `functions/api/` — Cloudflare Pages Functions for the same deployed APIs.
-- `schema.sql` — D1 accounts, hashed sessions, and synchronized user state.
+- `schema.sql` / `migrations/0003`–`0007` — D1 identity plus plans, tasks,
+  guests, availability polls, assets, wardrobe, packing, bookings, money,
+  connections, notifications, and expanded invitation roles.
+- `docs/version-8-integrated-planning-platform-plan.md` — the complete V8
+  product, interaction, data, API, migration, and acceptance plan.
 - `docs/version-7-plan.md` — release blockers, workstreams, and acceptance
   criteria used for the final stabilization pass.
 - `docs/vision.md` — the full 7-feature product vision.
@@ -87,6 +100,11 @@ npx wrangler pages secret put OPENROUTER_API_KEY
 The D1 binding must remain named `DB`. If a replacement database is created,
 update its non-secret identifier in `wrangler.toml`. The OpenRouter secret is optional. See
 `docs/backend.md` for the complete local and deployed setup.
+
+The calendar connection screen provides a combined standards-based `.ics`
+export that can be imported into Google Calendar, plus direct access to Google
+Calendar. Payment integrations intentionally use provider handoff links and
+copy-ready settlement notes; Malem never stores bank credentials.
 
 ## Verify it
 

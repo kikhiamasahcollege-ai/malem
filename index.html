@@ -9,6 +9,7 @@
 <meta property="og:url" id="og-url" content="/" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./styles.css?v=20260723-15" />
+  <link rel="stylesheet" href="./v8-workspace.css?v=20260724-4" />
 </head>
 <body>
 <div class="global-status" id="global-status" role="status" aria-live="polite"></div>
@@ -95,7 +96,7 @@
     <div class="form-actions">
       <button type="button" class="btn primary" id="accept-trip-invite" hidden>Join this trip</button>
       <button type="button" class="btn primary" id="signin-for-invite" hidden>Sign in or create an account</button>
-      <a href="#/chat" class="btn ghost" id="decline-trip-invite">Not now</a>
+      <a href="#/plans" class="btn ghost" id="decline-trip-invite">Not now</a>
     </div>
     <p class="save-note" id="invite-screen-note" aria-live="polite"></p>
   </div>
@@ -171,8 +172,12 @@
     </div>
 
     <button type="button" class="new-trip-btn" id="btn-new-trip">
-      <span aria-hidden="true">＋</span> New trip
+      <span aria-hidden="true">＋</span> New plan
     </button>
+
+    <nav class="side-nav v8-launch-nav" aria-label="Planning studio">
+      <a href="#/plans" data-route="plans">Planning home</a>
+    </nav>
 
     <div class="side-section">
       <span class="side-label">Recent trips</span>
@@ -536,6 +541,12 @@
 
         <ul id="journal-list" class="journal"></ul>
       </section>
+    </section>
+
+    <section class="page v8-page" data-page="plans" hidden>
+      <div id="v8-workspace" class="v8-workspace" aria-live="polite">
+        <div class="v8-loading">Opening your planning studio…</div>
+      </div>
     </section>
   </main>
 </div>
@@ -1035,6 +1046,7 @@
   </form>
 </dialog>
 
+<script type="module" src="./v8-workspace.js?v=20260724-4"></script>
 <script type="module" src="./app.js?v=20260723-15"></script>
 </body>
 </html>

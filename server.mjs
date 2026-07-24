@@ -185,7 +185,7 @@ const serveStatic = async (pathname, res) => {
 
 createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  if (/^\/api\/(?:health|community|signup|login|logout|account|me|state|trips(?:\/.*)?|invites(?:\/.*)?)\/?$/.test(url.pathname)) {
+  if (/^\/api\/(?:health|community|signup|login|logout|account|me|state|trips(?:\/.*)?|plans(?:\/.*)?|invites(?:\/.*)?)\/?$/.test(url.pathname)) {
     const request = new Request(url, {
       method: req.method,
       headers: req.headers,

@@ -80,7 +80,7 @@ test('new accounts complete a synced profile survey before trip planning', async
   assert.match(html, /Save preferences &amp; start planning|id="save-profile"/);
   assert.match(app, /onboardingCompleted:\s*false/);
   assert.match(app, /needsOnboarding/);
-  assert.match(app, /isSignup \? '#\/onboarding' : '#\/chat'/);
+  assert.match(app, /isSignup \? '#\/onboarding' : '#\/plans'/);
   assert.match(app, /onboardingCompleted:\s*completesOnboarding/);
   assert.match(app, /await auth\.flush\(\)/);
   assert.match(app, /showProfileOnboarding\(\)/);

@@ -2778,7 +2778,7 @@ const ui = (() => {
       $('#auth-title').textContent = isSignup ? 'Create your account.' : 'Welcome back.';
       $('#auth-lede').textContent  = isSignup
         ? 'Your account and trips will be available anywhere you sign in.'
-        : "Sign in and tell malem where you're heading.";
+        : 'Sign in and pick up every plan in one place.';
       $('#auth-submit').textContent = isSignup ? 'Create account' : 'Sign in';
       $('#auth-tag').textContent = isSignup ? 'Sign up' : 'Sign in';
       $('#auth-switch').innerHTML = isSignup
@@ -2802,7 +2802,7 @@ const ui = (() => {
         const pendingInvite = sessionStorage.getItem('malem.pendingInvite.v1');
         location.hash = pendingInvite
           ? `#/invite/${encodeURIComponent(pendingInvite)}`
-          : (isSignup ? '#/onboarding' : '#/chat');
+          : (isSignup ? '#/onboarding' : '#/plans');
         route();
       } catch (err) { flash('#auth-note', err.message || 'Something went wrong.'); }
       finally {
@@ -3082,9 +3082,7 @@ const ui = (() => {
   const startNewTrip = () => {
     const log = $('#chat-log'); log.innerHTML = '';
     $('#chat-suggestions').hidden = false;
-    location.hash = '#/chat';
-    const me = auth.current();
-    if (me) { store.activeTrip.clear(me.email); renderTripHistory(me); }
+    location.hash = '#/plans';
     route();
   };
 
@@ -3330,9 +3328,9 @@ const ui = (() => {
       if (completesOnboarding) {
         flash('#save-note', 'Saving your preferences…');
         await auth.flush();
-        location.hash = '#/chat';
+        location.hash = '#/plans';
         route();
-        flash('#global-status', 'Your travel profile is ready. Tell Malem where you’re heading.');
+        flash('#global-status', 'Your profile is ready. Choose what you want to plan.');
       } else {
         flash('#save-note', 'Saved.');
       }
@@ -5129,15 +5127,21 @@ const ui = (() => {
     if ($('#screen-app').hidden) return;
     const me = auth.current(); if (!me) return;
 
-    const raw = (location.hash || '#/chat').replace(/^#\/?/, '').split('?')[0] || 'chat';
-    const known = ['chat','itinerary','outfits','packing','expect','discover','local','group'];
-    const name = known.includes(raw) ? raw : 'chat';
+    const raw = (location.hash || '#/plans').replace(/^#\/?/, '').split('?')[0] || 'plans';
+    const known = ['chat','plans','itinerary','outfits','packing','expect','discover','local','group'];
+    const name = known.includes(raw) ? raw : 'plans';
+
+    // The former standalone AI chat is now contextual inside each planning studio.
+    if (name === 'chat') {
+      history.replaceState(null, '', '#/plans');
+      return showRoute();
+    }
 
     // If routing to a trip page but no trip active, redirect to chat.
     const trip = activeTripFor(me.email);
     const tripPage = ['itinerary','outfits','packing','expect','discover','local','group'].includes(name);
     if (tripPage && !trip) {
-      history.replaceState(null, '', '#/chat');
+      history.replaceState(null, '', '#/plans');
       return showRoute();
     }
 
@@ -5151,6 +5155,7 @@ const ui = (() => {
     if (name === 'discover')  renderDiscover();
     if (name === 'local')     renderLocal();
     if (name === 'group')     { renderMembers(); renderJournal(); }
+    if (name === 'plans')     window.MalemV8?.render?.();
 
     renderSidebar(me);
     document.querySelector('.content').scrollTo?.(0, 0);
@@ -5177,12 +5182,11 @@ const ui = (() => {
       showProfileOnboarding();
       return;
     }
-    if (location.hash === '#/onboarding') history.replaceState(null, '', '#/chat');
+    if (location.hash === '#/onboarding') history.replaceState(null, '', '#/plans');
 
-    // Signed in — always land in the app shell. Chat page if no active trip, else routed page.
+    // Signed in — always land on the unified planning home.
     if (!location.hash || location.hash === '#/auth') {
-      const trip = activeTripFor(me.email);
-      history.replaceState(null, '', trip ? '#/itinerary' : '#/chat');
+      history.replaceState(null, '', '#/plans');
     }
     renderSidebar(me);
     showScreen('app');
@@ -5217,7 +5221,7 @@ const ui = (() => {
 })();
 
 if (location.protocol === 'file:') {
-  const servedUrl = `http://localhost:8000/${location.hash || '#/chat'}`;
+  const servedUrl = `http://localhost:8000/${location.hash || '#/plans'}`;
   document.body.innerHTML = `<main class="server-required">
     <p class="eyebrow">Server required</p>
     <h1>Opening the live version of Malem…</h1>

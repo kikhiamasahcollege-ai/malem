@@ -12,6 +12,8 @@ export const PUBLIC_ASSETS = [
   'index.html',
   'styles.css',
   'app.js',
+  'v8-workspace.js',
+  'v8-workspace.css',
   'privacy.html',
   'terms.html',
   'lib/trip-contract.mjs',

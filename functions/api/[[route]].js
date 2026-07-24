@@ -9,6 +9,16 @@ import {
   canVoteOnTrip,
   normalizeTripDocument,
 } from '../../lib/trip-contract.mjs';
+import {
+  PLAN_DOCUMENT_VERSION,
+  PLAN_ROLES,
+  applyPlanOperations,
+  canEditPlan,
+  canManagePlan,
+  canonicalPlanRole,
+  normalizePlanDocument,
+  toTripDocument,
+} from '../../lib/plan-contract.mjs';
 import { discoverPlaces } from '../../lib/place-service.mjs';
 
 const SESSION_DAYS = 30;
@@ -267,6 +277,7 @@ const loadTripPayload = async (env, tripId, userId, { includeCollaboration = tru
       WHERE t.id = ?`,
   ).bind(userId, tripId).first();
   if (!row) return null;
+  const storedDocument = parseDocument(row.document_json);
   const payload = {
     metadata: {
       id: row.id,
@@ -279,7 +290,10 @@ const loadTripPayload = async (env, tripId, userId, { includeCollaboration = tru
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     },
-    trip: parseDocument(row.document_json),
+    trip: storedDocument?.documentVersion === PLAN_DOCUMENT_VERSION
+      ? toTripDocument(storedDocument, { actor: userId, cryptoApi: crypto })
+      : storedDocument,
+    ...(storedDocument?.documentVersion === PLAN_DOCUMENT_VERSION ? { plan: storedDocument } : {}),
     revision: row.revision,
     role: row.role,
     currentUserId: userId,
@@ -313,6 +327,79 @@ const loadTripPayload = async (env, tripId, userId, { includeCollaboration = tru
     })),
   };
   return payload;
+};
+
+const ensurePlanDocumentV3 = async (env, planId, actorUserId) => {
+  const row = await env.DB.prepare(
+    `SELECT t.*, d.document_json, d.schema_version, d.revision, d.updated_at AS document_updated_at
+       FROM trips t JOIN trip_documents d ON d.trip_id = t.id WHERE t.id = ?`,
+  ).bind(planId).first();
+  if (!row) return null;
+  const stored = parseDocument(row.document_json);
+  if (stored?.documentVersion === PLAN_DOCUMENT_VERSION) return stored;
+  const plan = normalizePlanDocument(stored, { actor: actorUserId, cryptoApi: crypto });
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE trip_documents
+          SET document_json = ?, schema_version = ?, last_editor_user_id = ?, updated_at = ?
+        WHERE trip_id = ?`,
+    ).bind(JSON.stringify(plan), PLAN_DOCUMENT_VERSION, actorUserId, now, planId),
+    env.DB.prepare(
+      `UPDATE trips
+          SET title = ?, destination = ?, start_date = ?, end_date = ?, plan_type = ?,
+              timezone = ?, currency = ?, ai_mode = ?, module_config_json = ?, updated_at = ?
+        WHERE id = ?`,
+    ).bind(
+      plan.title, plan.destination, plan.startAt || null, plan.endAt || null, plan.type,
+      plan.timezone, plan.currency, plan.aiMode, JSON.stringify(plan.modules), now, planId,
+    ),
+  ]);
+  return plan;
+};
+
+const loadPlanPayload = async (env, planId, userId) => {
+  const membership = await tripMembership(env, planId, userId);
+  if (!membership) return null;
+  const plan = await ensurePlanDocumentV3(env, planId, userId);
+  if (!plan) return null;
+  const [row, members] = await Promise.all([
+    env.DB.prepare(
+      `SELECT t.*, d.revision, d.updated_at AS document_updated_at
+         FROM trips t JOIN trip_documents d ON d.trip_id = t.id WHERE t.id = ?`,
+    ).bind(planId).first(),
+    env.DB.prepare(
+      `SELECT m.user_id, m.role, m.joined_at, m.updated_at, u.name
+         FROM trip_members m JOIN users u ON u.id = m.user_id
+        WHERE m.trip_id = ? ORDER BY m.joined_at ASC`,
+    ).bind(planId).all(),
+  ]);
+  return {
+    metadata: {
+      id: row.id,
+      ownerUserId: row.owner_user_id,
+      title: row.title,
+      destination: row.destination || '',
+      startDate: row.start_date || '',
+      endDate: row.end_date || '',
+      planType: row.plan_type || plan.type,
+      timezone: row.timezone || plan.timezone,
+      currency: row.currency || plan.currency,
+      aiMode: row.ai_mode || plan.aiMode,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+    plan,
+    revision: row.revision,
+    role: canonicalPlanRole(membership.role),
+    currentUserId: userId,
+    members: publicMemberRows(members.results).map((member) => ({
+      ...member,
+      role: canonicalPlanRole(member.role),
+    })),
+    updatedAt: row.document_updated_at,
+  };
 };
 
 const collaborationContext = async (env, tripId) => {
@@ -384,6 +471,264 @@ const publicProjection = (state) => {
 
 const segmentFor = (params) =>
   Array.isArray(params.route) ? params.route.join('/') : String(params.route || '');
+
+const handlePlanRoutes = async ({ request, env }, auth, parts) => {
+  const method = request.method.toUpperCase();
+
+  if (parts.length === 1 && method === 'GET') {
+    const rows = await env.DB.prepare(
+      `SELECT t.id
+         FROM trips t JOIN trip_members m ON m.trip_id = t.id
+        WHERE m.user_id = ? ORDER BY t.updated_at DESC LIMIT 100`,
+    ).bind(auth.user.id).all();
+    const plans = await Promise.all((rows.results || []).map((row) =>
+      loadPlanPayload(env, row.id, auth.user.id)));
+    return json({ plans: plans.filter(Boolean) });
+  }
+
+  if (parts.length === 1 && method === 'POST') {
+    const body = await parseBody(request, MAX_STATE_BYTES);
+    const plan = normalizePlanDocument(body.plan || body.trip || body, {
+      actor: auth.user.id,
+      cryptoApi: crypto,
+    });
+    const exists = await env.DB.prepare('SELECT id FROM trips WHERE id = ?').bind(plan.id).first();
+    if (exists) return json({ error: 'A plan with this ID already exists.' }, 409);
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO trips
+          (id, owner_user_id, title, destination, start_date, end_date, plan_type, timezone,
+           currency, ai_mode, module_config_json, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(
+        plan.id, auth.user.id, plan.title, plan.destination, plan.startAt || null, plan.endAt || null,
+        plan.type, plan.timezone, plan.currency, plan.aiMode, JSON.stringify(plan.modules),
+        Number(plan.createdAt) || now, now,
+      ),
+      env.DB.prepare(
+        `INSERT INTO trip_documents
+          (trip_id, document_json, schema_version, revision, last_editor_user_id, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?)`,
+      ).bind(plan.id, JSON.stringify(plan), PLAN_DOCUMENT_VERSION, auth.user.id, now),
+      env.DB.prepare(
+        `INSERT INTO trip_members
+          (trip_id, user_id, role, invited_by, joined_at, updated_at)
+         VALUES (?, ?, 'owner', NULL, ?, ?)`,
+      ).bind(plan.id, auth.user.id, now, now),
+    ]);
+    return json(await loadPlanPayload(env, plan.id, auth.user.id), 201);
+  }
+
+  const planId = parts[1];
+  if (!planId) return null;
+
+  if (parts.length === 2 && method === 'GET') {
+    await requireTrip(env, planId, auth.user.id);
+    return json(await loadPlanPayload(env, planId, auth.user.id));
+  }
+
+  if (parts.length === 2 && method === 'DELETE') {
+    await requireTrip(env, planId, auth.user.id, canManagePlan, 'Only the plan owner can delete this plan.');
+    await env.DB.prepare('DELETE FROM trips WHERE id = ?').bind(planId).run();
+    return json({ ok: true });
+  }
+
+  if (parts[2] === 'document' && parts.length === 3 && method === 'PATCH') {
+    enforceRateLimit(request, 'plan mutation', 60, `${auth.user.id}:${planId}`);
+    await ensurePlanDocumentV3(env, planId, auth.user.id);
+    const body = await parseBody(request, MAX_STATE_BYTES);
+    const membership = await requireTrip(env, planId, auth.user.id);
+    const participantCollections = new Set([
+      'tasks', 'packingItems', 'expenses', 'settlements', 'datePolls', 'activity',
+    ]);
+    const participantOperations = canonicalPlanRole(membership.role) === PLAN_ROLES.participant
+      && Array.isArray(body.operations)
+      && body.operations.every((operation) =>
+        (operation?.type === 'workspace.collection.replace'
+          && participantCollections.has(operation.collection))
+        || operation?.type === 'workspace.activity.add');
+    if (!canEditPlan(membership.role) && !participantOperations) {
+      return json({ error: 'This plan is read-only for your role.' }, 403);
+    }
+    const clientMutationId = String(body.clientMutationId || '').slice(0, 160);
+    if (!clientMutationId) return json({ error: 'clientMutationId is required.' }, 400);
+    const prior = await env.DB.prepare(
+      'SELECT id, result_revision FROM trip_mutations WHERE trip_id = ? AND client_mutation_id = ?',
+    ).bind(planId, clientMutationId).first();
+    if (prior) {
+      return json({
+        ...(await loadPlanPayload(env, planId, auth.user.id)),
+        mutation: prior,
+        idempotent: true,
+      });
+    }
+    const record = await env.DB.prepare(
+      'SELECT document_json, revision FROM trip_documents WHERE trip_id = ?',
+    ).bind(planId).first();
+    if (!record) return json({ error: 'Plan document not found.' }, 404);
+    if (Number(body.baseRevision) !== Number(record.revision)) {
+      return json({
+        error: 'This plan changed in another session.',
+        current: await loadPlanPayload(env, planId, auth.user.id),
+      }, 409);
+    }
+    const before = parseDocument(record.document_json);
+    const after = applyPlanOperations(before, body.operations, {
+      actor: auth.user.id,
+      cryptoApi: crypto,
+    });
+    const now = Date.now();
+    const mutationId = crypto.randomUUID();
+    const nextRevision = Number(record.revision) + 1;
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE trip_documents
+            SET document_json = ?, schema_version = ?, revision = ?,
+                last_editor_user_id = ?, updated_at = ?
+          WHERE trip_id = ? AND revision = ?`,
+      ).bind(
+        JSON.stringify(after), PLAN_DOCUMENT_VERSION, nextRevision,
+        auth.user.id, now, planId, record.revision,
+      ),
+      env.DB.prepare(
+        `UPDATE trips
+            SET title = ?, destination = ?, start_date = ?, end_date = ?, plan_type = ?,
+                timezone = ?, currency = ?, ai_mode = ?, module_config_json = ?, updated_at = ?
+          WHERE id = ? AND EXISTS (
+            SELECT 1 FROM trip_documents WHERE trip_id = ? AND revision = ?
+          )`,
+      ).bind(
+        after.title, after.destination, after.startAt || null, after.endAt || null, after.type,
+        after.timezone, after.currency, after.aiMode, JSON.stringify(after.modules), now,
+        planId, planId, nextRevision,
+      ),
+      env.DB.prepare(
+        `INSERT INTO trip_mutations
+          (id, trip_id, actor_user_id, client_mutation_id, base_revision, result_revision,
+           operation_json, before_json, after_json, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?
+          WHERE EXISTS (SELECT 1 FROM trip_documents WHERE trip_id = ? AND revision = ?)`,
+      ).bind(
+        mutationId, planId, auth.user.id, clientMutationId, record.revision, nextRevision,
+        JSON.stringify(body.operations), JSON.stringify(before), now, planId, nextRevision,
+      ),
+    ]);
+    if (!Number(results[0]?.meta?.changes || 0)) {
+      return json({
+        error: 'This plan changed in another session.',
+        current: await loadPlanPayload(env, planId, auth.user.id),
+      }, 409);
+    }
+    return json({
+      ...(await loadPlanPayload(env, planId, auth.user.id)),
+      mutation: {
+        id: mutationId,
+        tripId: planId,
+        actorUserId: auth.user.id,
+        clientMutationId,
+        baseRevision: record.revision,
+        resultRevision: nextRevision,
+        operations: body.operations,
+        createdAt: now,
+      },
+    });
+  }
+
+  if (parts[2] === 'history' && parts.length === 3 && method === 'GET') {
+    await requireTrip(env, planId, auth.user.id);
+    const rows = await env.DB.prepare(
+      `SELECT id, actor_user_id, client_mutation_id, base_revision, result_revision,
+              operation_json, created_at
+         FROM trip_mutations WHERE trip_id = ? ORDER BY created_at DESC LIMIT 50`,
+    ).bind(planId).all();
+    return json({ history: (rows.results || []).map((row) => ({
+      id: row.id,
+      actorUserId: row.actor_user_id,
+      clientMutationId: row.client_mutation_id,
+      baseRevision: row.base_revision,
+      resultRevision: row.result_revision,
+      operations: parseDocument(row.operation_json) || [],
+      createdAt: row.created_at,
+    })) });
+  }
+
+  if (parts[2] === 'undo' && parts.length === 3 && method === 'POST') {
+    await requireTrip(env, planId, auth.user.id, canEditPlan, 'This plan is read-only for your role.');
+    const body = await parseBody(request, MAX_AUTH_BYTES);
+    const original = await env.DB.prepare(
+      `SELECT id, result_revision, before_json FROM trip_mutations
+        WHERE trip_id = ? AND id = ?`,
+    ).bind(planId, body.mutationId).first();
+    if (!original?.before_json) return json({ error: 'The change to undo was not found.' }, 404);
+    const record = await env.DB.prepare(
+      'SELECT document_json, revision FROM trip_documents WHERE trip_id = ?',
+    ).bind(planId).first();
+    if (Number(record?.revision) !== Number(original.result_revision)
+      || Number(body.baseRevision) !== Number(record?.revision)) {
+      return json({
+        error: 'Undo is available only before another change is saved.',
+        current: await loadPlanPayload(env, planId, auth.user.id),
+      }, 409);
+    }
+    const restored = normalizePlanDocument(parseDocument(original.before_json), {
+      actor: auth.user.id,
+      cryptoApi: crypto,
+    });
+    const now = Date.now();
+    const clientMutationId = String(body.clientMutationId || `undo-${original.id}`).slice(0, 160);
+    const mutationId = crypto.randomUUID();
+    const nextRevision = Number(record.revision) + 1;
+    const results = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE trip_documents
+            SET document_json = ?, schema_version = ?, revision = ?,
+                last_editor_user_id = ?, updated_at = ?
+          WHERE trip_id = ? AND revision = ?`,
+      ).bind(
+        JSON.stringify(restored), PLAN_DOCUMENT_VERSION, nextRevision,
+        auth.user.id, now, planId, record.revision,
+      ),
+      env.DB.prepare(
+        `UPDATE trips
+            SET title = ?, destination = ?, start_date = ?, end_date = ?, plan_type = ?,
+                timezone = ?, currency = ?, ai_mode = ?, module_config_json = ?, updated_at = ?
+          WHERE id = ?`,
+      ).bind(
+        restored.title, restored.destination, restored.startAt || null, restored.endAt || null,
+        restored.type, restored.timezone, restored.currency, restored.aiMode,
+        JSON.stringify(restored.modules), now, planId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO trip_mutations
+          (id, trip_id, actor_user_id, client_mutation_id, base_revision, result_revision,
+           operation_json, before_json, after_json, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?
+          WHERE EXISTS (SELECT 1 FROM trip_documents WHERE trip_id = ? AND revision = ?)`,
+      ).bind(
+        mutationId, planId, auth.user.id, clientMutationId, record.revision, nextRevision,
+        JSON.stringify([{ type: 'undo', mutationId: original.id }]), record.document_json,
+        now, planId, nextRevision,
+      ),
+    ]);
+    if (!Number(results[0]?.meta?.changes || 0)) {
+      return json({
+        error: 'This plan changed before undo could be saved.',
+        current: await loadPlanPayload(env, planId, auth.user.id),
+      }, 409);
+    }
+    return json({
+      ...(await loadPlanPayload(env, planId, auth.user.id)),
+      mutation: { id: mutationId, resultRevision: nextRevision },
+    });
+  }
+
+  if (parts[2] === 'members' || parts[2] === 'invites') {
+    return handleTripRoutes({ request, env }, auth, parts);
+  }
+
+  return null;
+};
 
 const handleTripRoutes = async ({ request, env }, auth, parts) => {
   const method = request.method.toUpperCase();
@@ -460,7 +805,9 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
       return json({ error: 'This trip changed in another session.', current: await loadTripPayload(env, tripId, auth.user.id) }, 409);
     }
     const before = parseDocument(record.document_json);
-    const after = applyTripOperations(before, body.operations, { actor: auth.user.id, cryptoApi: crypto });
+    const after = before?.documentVersion === PLAN_DOCUMENT_VERSION
+      ? applyPlanOperations(before, body.operations, { actor: auth.user.id, cryptoApi: crypto })
+      : applyTripOperations(before, body.operations, { actor: auth.user.id, cryptoApi: crypto });
     const now = Date.now();
     const mutationId = crypto.randomUUID();
     const nextRevision = Number(record.revision) + 1;
@@ -475,7 +822,7 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
           WHERE id = ? AND EXISTS (
             SELECT 1 FROM trip_documents WHERE trip_id = ? AND revision = ?
           )`,
-      ).bind(after.summary || after.destination, after.destination, now, tripId, tripId, nextRevision),
+      ).bind(after.title || after.summary || after.destination, after.destination, now, tripId, tripId, nextRevision),
       env.DB.prepare(
         `INSERT INTO trip_mutations
           (id, trip_id, actor_user_id, client_mutation_id, base_revision, result_revision,
@@ -527,7 +874,10 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
     if (Number(record?.revision) !== Number(original.result_revision) || Number(body.baseRevision) !== Number(record?.revision)) {
       return json({ error: 'Undo is available only before another change is saved.', current: await loadTripPayload(env, tripId, auth.user.id) }, 409);
     }
-    const restored = normalizeTripDocument(parseDocument(original.before_json), { actor: auth.user.id, cryptoApi: crypto });
+    const priorDocument = parseDocument(original.before_json);
+    const restored = priorDocument?.documentVersion === PLAN_DOCUMENT_VERSION
+      ? normalizePlanDocument(priorDocument, { actor: auth.user.id, cryptoApi: crypto })
+      : normalizeTripDocument(priorDocument, { actor: auth.user.id, cryptoApi: crypto });
     const now = Date.now();
     const clientMutationId = String(body.clientMutationId || `undo-${original.id}`).slice(0, 160);
     const mutationId = crypto.randomUUID();
@@ -568,7 +918,12 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
   if (parts[2] === 'members' && parts[3] && parts.length === 4 && method === 'PATCH') {
     await requireTrip(env, tripId, auth.user.id, canManageTrip, 'Only the trip owner can change roles.');
     const body = await parseBody(request, MAX_AUTH_BYTES);
-    if (![TRIP_ROLES.collaborator, TRIP_ROLES.viewer].includes(body.role)) return json({ error: 'Choose collaborator or viewer.' }, 400);
+    const allowedRoles = parts[0] === 'plans'
+      ? [PLAN_ROLES.planner, PLAN_ROLES.participant, PLAN_ROLES.viewer]
+      : [TRIP_ROLES.collaborator, TRIP_ROLES.viewer];
+    if (!allowedRoles.includes(body.role)) {
+      return json({ error: parts[0] === 'plans' ? 'Choose planner, participant, or viewer.' : 'Choose collaborator or viewer.' }, 400);
+    }
     const target = await tripMembership(env, tripId, parts[3]);
     if (!target) return json({ error: 'Trip member not found.' }, 404);
     if (target.role === TRIP_ROLES.owner) return json({ error: 'The owner role cannot be changed.' }, 400);
@@ -605,7 +960,11 @@ const handleTripRoutes = async ({ request, env }, auth, parts) => {
     await requireTrip(env, tripId, auth.user.id, canManageTrip, 'Only the trip owner can create invitations.');
     enforceRateLimit(request, 'invite creation', 8, `${auth.user.id}:${tripId}`);
     const body = await parseBody(request, MAX_AUTH_BYTES);
-    const role = body.role === TRIP_ROLES.collaborator ? TRIP_ROLES.collaborator : TRIP_ROLES.viewer;
+    const requestedRole = parts[0] === 'plans'
+      ? body.role
+      : body.role === TRIP_ROLES.collaborator ? TRIP_ROLES.collaborator : TRIP_ROLES.viewer;
+    const role = [PLAN_ROLES.planner, PLAN_ROLES.participant, PLAN_ROLES.viewer, TRIP_ROLES.collaborator]
+      .includes(requestedRole) ? requestedRole : PLAN_ROLES.viewer;
     const expiresInDays = Math.min(30, Math.max(1, Number(body.expiresInDays) || 7));
     const maxUses = Math.min(50, Math.max(1, Number(body.maxUses) || 1));
     const token = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll('-', '');
@@ -907,6 +1266,12 @@ export async function onRequest(context) {
     if (parts[0] === 'trips') {
       const auth = await requireAuth(env, request);
       const response = await handleTripRoutes({ request, env }, auth, parts);
+      if (response) return response;
+    }
+
+    if (parts[0] === 'plans') {
+      const auth = await requireAuth(env, request);
+      const response = await handlePlanRoutes({ request, env }, auth, parts);
       if (response) return response;
     }
 
