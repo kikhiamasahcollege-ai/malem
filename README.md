@@ -115,6 +115,18 @@ node --check server.mjs
 node --test tests/*.test.mjs
 ```
 
+Before a release, run the repeatable production gate:
+
+```
+node scripts/release-preflight.mjs --require-clean
+```
+
+It rebuilds the explicit public asset allowlist, parses every production
+JavaScript entry point, runs the full suite twice, rehearses migrations
+`0003`–`0007` against the deployed V7 baseline, validates the consolidated
+disaster-recovery schema, and rejects patch or worktree drift. The same gate
+runs in GitHub Actions for every push and pull request.
+
 ## Design principles
 
 - **Every preference is a control the user sets.** Never inferred from

@@ -65,6 +65,13 @@ Additional implementation evidence:
 - Create a no-AI event, task, three-option date poll, $1,000 budget, $125.50 expense, booking, ticket, wardrobe item with photo, linked packing item, auto-applied packing template, and uploaded Visionary pin.
 - Reload and confirm the task, poll, booking, budget arithmetic, wardrobe/packing link, reusable list, uploaded visual, and no-AI state persist.
 - Trigger the combined calendar export and confirm three calendar items are generated.
+- Create, edit, and remove a run-of-show item; confirm an empty day remains intentional after item removal.
+- Add, edit, and remove a guest with RSVP, dietary, accessibility, and payment-app details.
+- Cast and persist an availability vote; create and copy a secure Participant invitation.
+- Complete a task, add a shared journal note, and add/remove a venue idea.
+- Rename and date a plan, opt into contextual AI, receive a live plan-aware response, then restore no-AI mode.
+- Disable and restore a plan module; switch between active plans and preserve the selected plan.
+- Create a sacrificial general plan and verify native confirmation plus durable deletion.
 - Verify the choice and AI intake at 390 × 844 with no horizontal overflow.
 - Verify the planning home and no-AI studio at 1280 × 720.
 - Confirm browser console diagnostics are empty.

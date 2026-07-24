@@ -110,3 +110,19 @@ test('database migrations cover plan, wardrobe, packing, booking, money, and con
   ]) assert.match(sql, new RegExp(`CREATE TABLE ${table}`));
   assert.match(sql, /participant/);
 });
+
+test('the release gate rebuilds, double-tests, rehearses migrations, and runs in CI', async () => {
+  const [preflight, workflow, readme] = await Promise.all([
+    read('scripts/release-preflight.mjs'),
+    read('.github/workflows/verify.yml'),
+    read('README.md'),
+  ]);
+  assert.match(preflight, /scripts\/build\.mjs/);
+  assert.match(preflight, /pass <= 2/);
+  assert.match(preflight, /0003_plan_foundation\.sql/);
+  assert.match(preflight, /0007_plan_invite_roles\.sql/);
+  assert.match(preflight, /PRAGMA foreign_key_check/);
+  assert.match(preflight, /--require-clean/);
+  assert.match(workflow, /release-preflight\.mjs --require-clean/);
+  assert.match(readme, /repeatable production gate/);
+});
