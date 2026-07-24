@@ -103,6 +103,10 @@ test('client retrieval uses full-look queries and direct-image-first fallback', 
   assert.match(source, /beach resort/);
   assert.match(source, /Italy|locationLabel/);
   assert.match(source, /data-proxy-src/);
+  assert.match(source, /data-board-direction="you"/);
+  assert.match(source, /outfitReferenceRank/);
+  assert.match(source, /data-live-feedback-reason/);
+  assert.match(source, /styleDNAKeywords/);
   assert.doesNotMatch(source, /retrieveCandidates\(piece/);
   assert.doesNotMatch(source, /pinterest\.searchPins\(`\$\{audience\} fashion accessories/);
 });

@@ -15,6 +15,7 @@ export const PUBLIC_ASSETS = [
   'privacy.html',
   'terms.html',
   'lib/trip-contract.mjs',
+  'lib/outfit-personalization.mjs',
   '_headers',
 ];
 

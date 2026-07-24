@@ -8,7 +8,7 @@
 <link rel="canonical" id="canonical-url" href="/" />
 <meta property="og:url" id="og-url" content="/" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='6' fill='%231F1C15'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./styles.css?v=20260723-14" />
+  <link rel="stylesheet" href="./styles.css?v=20260723-15" />
 </head>
 <body>
 <div class="global-status" id="global-status" role="status" aria-live="polite"></div>
@@ -610,7 +610,84 @@
             <option value="mature">Mature adult</option>
           </select>
         </label>
-        <p class="hint">This is used only for outfit planning and image search. It is never guessed from your name or other profile details.</p>
+        <p class="hint">These controls and your Style DNA are used only for outfit planning and image search. Nothing is guessed from your name or demographics.</p>
+        <div class="style-dna-profile">
+          <div>
+            <span class="field-label">Style families</span>
+            <div class="chips" data-style-dna="archetypes">
+              <label><input type="checkbox" value="minimal" /><span>Minimal</span></label>
+              <label><input type="checkbox" value="classic" /><span>Classic</span></label>
+              <label><input type="checkbox" value="romantic" /><span>Romantic</span></label>
+              <label><input type="checkbox" value="vintage" /><span>Vintage</span></label>
+              <label><input type="checkbox" value="streetwear" /><span>Streetwear</span></label>
+              <label><input type="checkbox" value="sporty" /><span>Sporty</span></label>
+              <label><input type="checkbox" value="bohemian" /><span>Bohemian</span></label>
+              <label><input type="checkbox" value="avant-garde" /><span>Avant-garde</span></label>
+            </div>
+          </div>
+          <div>
+            <span class="field-label">Preferred silhouettes</span>
+            <div class="chips" data-style-dna="silhouettes">
+              <label><input type="checkbox" value="relaxed" /><span>Relaxed</span></label>
+              <label><input type="checkbox" value="tailored" /><span>Tailored</span></label>
+              <label><input type="checkbox" value="fitted" /><span>Fitted</span></label>
+              <label><input type="checkbox" value="oversized" /><span>Oversized</span></label>
+              <label><input type="checkbox" value="fluid" /><span>Fluid</span></label>
+              <label><input type="checkbox" value="structured" /><span>Structured</span></label>
+            </div>
+          </div>
+          <div>
+            <span class="field-label">Palette behavior</span>
+            <div class="chips" data-style-dna="palettes">
+              <label><input type="checkbox" value="neutral" /><span>Neutral</span></label>
+              <label><input type="checkbox" value="earthy" /><span>Earthy</span></label>
+              <label><input type="checkbox" value="monochrome" /><span>Monochrome</span></label>
+              <label><input type="checkbox" value="pastel" /><span>Pastel</span></label>
+              <label><input type="checkbox" value="jewel-tone" /><span>Jewel tones</span></label>
+              <label><input type="checkbox" value="bright" /><span>Bright</span></label>
+            </div>
+          </div>
+          <div>
+            <span class="field-label">Footwear you actually wear</span>
+            <div class="chips" data-style-dna="footwear">
+              <label><input type="checkbox" value="sneakers" /><span>Sneakers</span></label>
+              <label><input type="checkbox" value="loafers" /><span>Loafers</span></label>
+              <label><input type="checkbox" value="flats" /><span>Flats</span></label>
+              <label><input type="checkbox" value="boots" /><span>Boots</span></label>
+              <label><input type="checkbox" value="sandals" /><span>Sandals</span></label>
+              <label><input type="checkbox" value="heels" /><span>Heels</span></label>
+            </div>
+          </div>
+          <div class="style-range-grid">
+            <label class="field range-field">
+              <span>Styling intensity <output data-style-output="intensity">45</output></span>
+              <input type="range" name="styleIntensity" min="0" max="100" step="5" value="45" />
+              <small>Understated → statement</small>
+            </label>
+            <label class="field range-field">
+              <span>Practicality <output data-style-output="practicality">75</output></span>
+              <input type="range" name="stylePracticality" min="0" max="100" step="5" value="75" />
+              <small>Editorial → highly practical</small>
+            </label>
+            <label class="field range-field">
+              <span>Experimentation <output data-style-output="experimentation">25</output></span>
+              <input type="range" name="styleExperimentation" min="0" max="100" step="5" value="25" />
+              <small>Most like me → stretch my style</small>
+            </label>
+          </div>
+          <label class="field">
+            <span>Materials or patterns you love</span>
+            <input type="text" name="styleMaterials" placeholder="linen, silk, denim, stripes…" />
+          </label>
+          <label class="field">
+            <span>Never show me</span>
+            <input type="text" name="styleAvoid" placeholder="neon, bodycon, stilettos…" />
+          </label>
+          <label class="field">
+            <span>Closet staples to reuse</span>
+            <textarea name="closetStaples" rows="2" placeholder="black blazer, white sneakers, wide-leg jeans…"></textarea>
+          </label>
+        </div>
       </fieldset>
 
       <fieldset class="fieldset">
@@ -790,7 +867,7 @@
           <span>Live outfit vision-board workflow</span>
           <span class="conn-status">Plan → retrieve → visually curate</span>
         </legend>
-        <p class="hint">The planner receives the original request, saved profile, live weather, and itinerary as one immutable context. It searches for real fashion pieces, then a separate vision model selects and audits model-free cutouts for each daily editorial board. No images are AI-generated.</p>
+        <p class="hint">The planner receives the original request, confirmed Style DNA, closet staples, live weather, and named itinerary moments as one immutable context. It retrieves real complete-outfit references, then a separate vision model scores taste, itinerary, weather, wearability, and capsule fit. No images are AI-generated.</p>
         <label class="field">
           <span>1. Build each day’s capsule direction</span>
           <select name="outfitPlanModel">
@@ -799,7 +876,7 @@
           </select>
         </label>
         <label class="field">
-          <span>2. Visually curate real web-sourced pieces</span>
+          <span>2. Visually rank real complete-outfit references</span>
           <select name="outfitCurateModel">
             <option value="google/gemini-3.1-flash-lite">Gemini 3.1 Flash Lite — fast multimodal curator</option>
             <option value="google/gemini-3-flash-preview">Gemini 3 Flash — deeper visual curator</option>
@@ -904,8 +981,8 @@
           <span class="conn-status" id="conn-status-pinterest">Active</span>
         </legend>
         <p class="hint">
-          The outfit feed uses up to two cached full-look searches per style direction, built from your country, city, season, activities, vibe, wardrobe presentation, and modesty preferences.
-          Results are de-duplicated and ranked in this browser using text relevance, visual similarity, and your Save/Open/Zoom/Hide history. No Pinterest login is needed.
+          The outfit feed uses up to three cached full-look query families per style direction, built from your country, city, season, named itinerary moments, confirmed Style DNA, wardrobe presentation, and modesty preferences.
+          Results are de-duplicated and ranked using multimodal fit plus your device-local Love, Save, More like this, and reason-coded Not for me history. Pinterest-assisted calibration stores only the Style DNA you confirm; no Pinterest login is needed.
         </p>
 
         <label class="field">
@@ -958,6 +1035,6 @@
   </form>
 </dialog>
 
-<script type="module" src="./app.js?v=20260723-14"></script>
+<script type="module" src="./app.js?v=20260723-15"></script>
 </body>
 </html>

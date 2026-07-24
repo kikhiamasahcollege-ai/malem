@@ -53,13 +53,16 @@ presentation, with an automatic schema-repair pass when needed. If it is
 unconfigured or fails, Malem explicitly labels and saves a deterministic
 offline-ready plan instead of leaving the site unusable.
 
-The deployed outfit-image pipeline is budget-bounded: at most two uncached
-full-look searches are attempted per look, twelve per browser render, and three
-upstream fetches per server search. Search results persist in the browser and at
-Cloudflare's edge. Images load directly first and use the allowlisted Cloudflare
-proxy only when a remote host blocks the browser. When limits or upstream
-providers are unavailable, the UI uses cached results or a source-search link
-instead of repeatedly retrying.
+The deployed outfit-image pipeline is budget-bounded: up to three taste-aware
+query families are generated from named itinerary moments, confirmed Style DNA,
+weather, wardrobe presentation, and closet staples, with twelve uncached
+searches allowed per browser render and three upstream fetches per server
+search. A multimodal pass separately scores itinerary fit, taste fit, weather,
+wearability, and capsule compatibility. Search results persist in the browser
+and at Cloudflare's edge. Images load directly first and use the allowlisted
+Cloudflare proxy only when a remote host blocks the browser. Love, Save, More
+like this, and reason-coded Not for me actions update a device-local taste
+profile; confirmed Style DNA remains an editable synchronized profile control.
 
 There is no package dependency. `node scripts/build.mjs` copies an explicit
 allowlist of browser assets and the shared browser trip-contract module into

@@ -293,6 +293,24 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 .profile-form .fieldset.two-col > legend { grid-column: 1 / -1; }
+.style-dna-profile {
+  display: grid; gap: 1.1rem;
+  margin-top: .55rem; padding-top: 1rem;
+  border-top: 1px solid var(--hairline);
+}
+.field-label {
+  display: block; margin-bottom: .45rem;
+  color: var(--ink-2); font-size: .82rem; letter-spacing: .03em;
+}
+.style-range-grid {
+  display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.range-field { gap: .35rem; }
+.range-field > span { display: flex; justify-content: space-between; gap: .75rem; }
+.range-field output { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.range-field input[type="range"] { width: 100%; accent-color: var(--ink); }
+.range-field small { color: var(--ink-3); font-size: .7rem; }
 .profile-onboarding .sheet-actions {
   position: sticky; bottom: 0; z-index: 5;
   margin-top: 2.5rem; padding: 1rem 0;
@@ -1130,6 +1148,45 @@ textarea {
 .shuffle-caption .meta { color: var(--ink-3); font-size: .82rem; margin-top: .5rem; font-style: italic; }
 
 /* --- Personalized outfit curation feed --- */
+.style-dna-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin-bottom: 1rem; padding: 1rem 1.1rem;
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
+}
+.style-dna-card-copy { display: grid; gap: .22rem; }
+.style-dna-card-copy strong { font: 400 1.05rem/1.2 var(--font-serif); }
+.style-dna-card-copy small { color: var(--ink-3); font-size: .7rem; }
+.style-dna-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
+.style-lab {
+  margin-bottom: 1.5rem; padding: clamp(1rem, 3vw, 1.5rem);
+  border: 1px solid var(--ink); border-radius: var(--radius-lg); background: var(--surface);
+}
+.style-lab[hidden] { display: none; }
+.style-lab-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.style-lab-head h3 { margin: .2rem 0 .3rem; font: 400 1.5rem/1.1 var(--font-serif); }
+.style-lab-head p { max-width: 66ch; color: var(--ink-3); font-size: .78rem; line-height: 1.45; }
+.style-calibration-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .6rem;
+}
+.style-calibration-card {
+  overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.style-calibration-image { aspect-ratio: 3 / 4; display: grid; place-items: center; overflow: hidden; }
+.style-calibration-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.style-calibration-image > span { color: var(--ink-3); font: 400 1rem var(--font-serif); }
+.style-calibration-card > strong { display: block; padding: .55rem .55rem .25rem; font: 400 .85rem var(--font-serif); }
+.style-calibration-card > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem; padding: .25rem .4rem .5rem; }
+.style-calibration-card button,
+.outfit-reference-actions button,
+.outfit-feedback-reasons button {
+  border: 1px solid var(--hairline); border-radius: 999px; padding: .28rem .38rem;
+  color: var(--ink-2); background: var(--surface); font: 600 .55rem/1 var(--font-sans); cursor: pointer;
+}
+.style-calibration-card button[aria-pressed="true"] { color: var(--accent-ink); border-color: var(--ink); background: var(--ink); }
+.style-lab-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1rem; }
 .recommendation-explainer {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem;
   padding: .85rem; margin: 0 0 1.5rem; border: 1px solid var(--hairline);
@@ -1161,6 +1218,7 @@ textarea {
 .ranked-pin.is-zoomed .pin-image-button { aspect-ratio: 4 / 5; cursor: zoom-out; }
 .ranked-pin.image-failed .pin-image-button::after { content: 'Image unavailable'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: .7rem; }
 .ranked-pin.image-failed img { opacity: 0; }
+.ranked-pin .outfit-feedback-reasons { margin: 0 .5rem .55rem; }
 .wardrobe-brief { padding: .75rem 1rem 1rem; border-top: 1px solid var(--hairline); }
 .wardrobe-brief summary { cursor: pointer; color: var(--ink-3); font-size: .72rem; }
 .wardrobe-brief .look-items { list-style: none; padding: .6rem 0 0; margin: 0; display: grid; gap: .25rem; }
@@ -1251,6 +1309,14 @@ textarea {
   font: 400 clamp(1.55rem, 3vw, 2.35rem)/1.02 var(--font-serif);
   letter-spacing: -.025em;
 }
+.board-direction-tabs { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .7rem; }
+.board-direction-tabs button {
+  border: 1px solid var(--hairline); border-radius: 999px; padding: .28rem .52rem;
+  color: var(--ink-3); background: transparent; font: 600 .55rem/1 var(--font-sans); cursor: pointer;
+}
+.board-direction-tabs button[aria-pressed="true"] {
+  color: var(--accent-ink); border-color: var(--ink); background: var(--ink);
+}
 .vision-board-canvas {
   position: relative; min-height: clamp(38rem, 67vw, 48rem);
   overflow: hidden; isolation: isolate; background: #e9dfcf;
@@ -1311,6 +1377,7 @@ textarea {
   transform: rotate(var(--reference-rotate, 0deg));
   transition: transform .2s ease, box-shadow .2s ease;
 }
+.outfit-reference-image { display: block; color: inherit; text-decoration: none; }
 .outfit-reference:nth-child(3n + 1) { --reference-rotate: -1.8deg; }
 .outfit-reference:nth-child(3n + 2) { --reference-rotate: 1.2deg; }
 .outfit-reference:nth-child(3n) { --reference-rotate: -1deg; }
@@ -1322,11 +1389,23 @@ textarea {
   display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
   background: #dfd3c1;
 }
-.outfit-reference > span:last-child {
+.outfit-reference-label {
   display: block; padding: .45rem .15rem 0;
   color: #776b5e; text-transform: uppercase; letter-spacing: .13em;
   font: 600 .52rem/1.25 var(--font-sans);
 }
+.outfit-match-why {
+  display: block; min-height: 2.25rem; padding: .25rem .15rem;
+  color: #6e6255; font: 400 .62rem/1.3 var(--font-serif);
+}
+.outfit-reference-actions { display: flex; flex-wrap: wrap; gap: .22rem; padding: .2rem .1rem 0; }
+.outfit-reference-actions button[aria-pressed="true"] { border-color: #35291e; background: #35291e; color: #f8f1e4; }
+.outfit-feedback-reasons {
+  display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .35rem; padding-top: .35rem;
+  border-top: 1px dashed rgba(84,63,40,.22);
+}
+.outfit-feedback-reasons[hidden] { display: none; }
+.outfit-feedback-reasons button { background: transparent; }
 .outfit-reference.image-failed img { opacity: 0; }
 .outfit-reference.image-failed::after {
   content: 'Reference unavailable'; position: absolute; inset: .38rem .38rem 2rem;
@@ -1409,6 +1488,20 @@ textarea {
 .board-context span {
   display: block; padding-bottom: .3rem; border-bottom: 1px dotted var(--hairline);
 }
+.board-moments {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .45rem;
+}
+.board-moments > span {
+  display: grid; gap: .12rem; padding: .55rem .65rem; border-radius: .45rem; background: var(--surface-2);
+  color: var(--ink-2); font: 400 .72rem/1.3 var(--font-serif);
+}
+.board-moments b {
+  color: var(--ink-3); text-transform: uppercase; letter-spacing: .13em;
+  font: 700 .52rem/1 var(--font-sans);
+}
+.board-closet { grid-column: 1 / -1; display: flex; align-items: baseline; gap: .55rem; }
+.board-closet span { color: var(--ink-3); text-transform: uppercase; letter-spacing: .14em; font-size: .55rem; }
+.board-closet p { margin: 0; font: italic .82rem var(--font-serif); }
 .board-palette { display: flex; align-items: center; gap: .3rem; }
 .board-palette i {
   width: 1.35rem; aspect-ratio: 1; display: block; border-radius: 50%;
@@ -1423,6 +1516,8 @@ textarea {
 .board-loading .pin-skeleton { width: min(18rem, 55vw); aspect-ratio: 4 / 3; }
 .board-loading small { color: #6f6254; }
 @media (max-width: 720px) {
+  .style-dna-card, .style-lab-head, .style-lab-footer { align-items: flex-start; flex-direction: column; }
+  .style-calibration-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vision-board-head { padding-inline: 1rem; }
   .vision-board-canvas { min-height: 50rem; }
   .outfit-reference-grid {

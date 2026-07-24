@@ -25,7 +25,7 @@ const answer = (res, json, model = 'mock/model') => {
 };
 
 const outfitPlan = (days, palette = ['#334455', '#D8C7A1', '#6B4E3D']) => ({
-  version: 2,
+  version: 4,
   contextSummary: ['live weather honored', 'saved profile honored', 'activities matched'],
   capsulePalette: palette,
   looks: Array.from({ length: Math.min(days, 6) }, (_, index) => ({
@@ -34,12 +34,18 @@ const outfitPlan = (days, palette = ['#334455', '#D8C7A1', '#6B4E3D']) => ({
     weatherNote: 'Layered for the forecast', activityNote: 'Walking-ready',
     vibeWords: ['quiet', 'editorial', 'travel-ready'],
     stylingNote: 'Texture-led practical layers.',
+    moments: [
+      { period: 'morning', label: 'Neighborhood walk', requirements: ['city walking'] },
+      { period: 'afternoon', label: 'Small museum', requirements: ['city walking'] },
+    ],
     pieces: [
       { part: 'top', item: 'breathable poplin shirt', color: 'ivory', reason: 'weather', searchQuery: 'ivory poplin shirt product cutout' },
       { part: 'bottom', item: 'wide-leg trousers', color: 'navy', reason: 'walking', searchQuery: 'navy wide leg trousers product cutout' },
       { part: 'shoes', item: 'cushioned walking shoes', color: 'brown', reason: 'comfort', searchQuery: 'brown walking shoes product cutout' },
       { part: 'outerwear', item: 'light rain layer', color: 'sand', reason: 'forecast', searchQuery: 'sand rain jacket product cutout' },
     ],
+    transitionPieces: [],
+    closetMatches: [],
     reuse: ['walking shoes'],
   })),
 });
@@ -82,6 +88,21 @@ createServer(async (req, res) => {
   } else if (system.includes('visual fashion editor')) {
     const pieceIndexes = [...new Set([...user.matchAll(/pieceIndex\s+(\d+)/g)].map(match => Number(match[1])))];
     answer(res, { selections: pieceIndexes.map(pieceIndex => ({ pieceIndex, candidateIndex: 0, confidence: 0.9, reason: 'clean cutout' })), boardNote: 'Mock live-piece curation.' }, body.model);
+  } else if (system.includes('multimodal outfit-reference ranker')) {
+    const candidateIndexes = [...new Set([...user.matchAll(/candidateIndex\s+(\d+)/g)].map(match => Number(match[1])))];
+    answer(res, {
+      assessments: candidateIndexes.map((candidateIndex) => ({
+        candidateIndex,
+        itineraryFit: .9,
+        tasteFit: .85,
+        weatherFit: .8,
+        wearability: .9,
+        capsuleFit: .8,
+        reject: false,
+        attributes: ['tailored', 'neutral'],
+        reason: 'Tailored and walking-ready.',
+      })),
+    }, body.model);
   } else if (system.includes('travel wardrobe editor')) {
     const days = Number(user.match(/"days":(\d+)/)?.[1] || 3);
     const palette = JSON.parse(user.match(/"palette":(\[[^\]]+\])/i)?.[1] || '[]');

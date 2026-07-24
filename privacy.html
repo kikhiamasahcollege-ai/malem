@@ -28,7 +28,7 @@
 <div class="doc">
   <a class="back" href="./">← Back to malem</a>
 
-  <span class="updated">Updated 19 July 2026</span>
+  <span class="updated">Updated 23 July 2026</span>
   <h1>Privacy policy</h1>
   <p>This page explains what the Malem web service stores, what remains on your device, and when information is sent to travel-planning or image providers.</p>
 
@@ -38,7 +38,7 @@
   <h2>What Malem stores for your account</h2>
   <ul>
     <li>Your name and email address.</li>
-    <li>Your travel profile (vibes, budget, pace, dietary preferences, accessibility notes, religious and cultural notes, modesty preferences, medical notes, family notes, places to avoid).</li>
+    <li>Your travel profile (vibes, budget, pace, user-confirmed Style DNA and closet staples, dietary preferences, accessibility notes, religious and cultural notes, modesty preferences, medical notes, family notes, places to avoid).</li>
     <li>Your saved trip requests, generated plans, and current active trip.</li>
     <li>Your group members' names and constraints.</li>
     <li>Your trip journal entries and whether you opted to publish each entry.</li>
@@ -46,7 +46,7 @@
   <p>The same customer content is cached in this browser for fast rendering and degraded operation. Clearing browser data removes that local cache but does not delete the account. Use <strong>Settings → Delete account</strong> to permanently remove the account, sessions, and synchronized content.</p>
 
   <h2>What remains on this device</h2>
-  <p>Theme and interface preferences, optional model/provider settings, optional provider API keys, model cost traces, image-search keywords, and outfit-ranking actions remain in this browser and are not synchronized to your Malem account. Clearing this site's browser data removes them.</p>
+  <p>Theme and interface preferences, optional model/provider settings, optional provider API keys, model cost traces, image-search keywords, outfit-image vectors, derived candidate assessments, and outfit-ranking actions remain in this browser and are not synchronized to your Malem account. Your explicitly confirmed Style DNA and closet staples are synchronized as editable profile controls. Clearing this site's browser data removes only the device-local signals.</p>
 
   <h2>What Malem does not do</h2>
   <ul>
@@ -65,7 +65,7 @@
   <p>If you enter your own OpenAI or Anthropic key, that key stays in this browser and requests are sent to that provider under its terms. Browser-stored keys can be read by JavaScript running on this origin, so use a limited, revocable key and remove it when no longer needed.</p>
 
   <h3>Pinterest inspiration</h3>
-  <p>The Outfit inspiration page sends bounded public-image searches built from destination, season, itinerary setting, wardrobe presentation, modesty preference, and optional style keywords through Malem's same-origin search route. It requests full-outfit inspiration, not private Pinterest content. Images are normally loaded from their source host and may use Malem's allowlisted image proxy if direct loading fails. Source-host privacy policies still apply.</p>
+  <p>The Outfit inspiration page sends bounded public-image searches built from destination, season, named itinerary moments, wardrobe presentation, modesty preference, confirmed Style DNA, and optional style keywords through Malem's same-origin search route. Pinterest-assisted calibration retrieves public style references but does not connect to, read, or store your Pinterest account, boards, Pins, or login. Malem stores only the Style DNA choices you explicitly confirm. Images are normally loaded from their source host and may use Malem's allowlisted image proxy if direct loading fails. Source-host privacy policies still apply.</p>
 
   <h2>Community journal</h2>
   <p>Entries marked “Publish publicly” are returned by the public community endpoint with the entry text, author display name, destination, and selected accuracy notes. Private entries are never returned there. Turning publication off and saving the journal state removes the entry from future community responses.</p>

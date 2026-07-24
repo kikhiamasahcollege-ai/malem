@@ -6,6 +6,17 @@ import {
   mergeGeneratedTrip,
   normalizeTripDocument,
 } from './lib/trip-contract.mjs';
+import {
+  DEFAULT_STYLE_DNA,
+  STYLE_OPTIONS,
+  buildOutfitIntent,
+  buildPersonalizedQueries,
+  deriveOutfitMoments,
+  feedbackEventWeight,
+  matchExplanation,
+  normalizeStyleDNA,
+  styleDNAKeywords,
+} from './lib/outfit-personalization.mjs';
 
 // ---------- store ----------
 const store = (() => {
@@ -58,6 +69,7 @@ const store = (() => {
     // product brief; this is explicit, editable preference—not inference.
     wardrobePresentation: 'women',
     styleAgeBand: 'adult',
+    styleDNA: { ...DEFAULT_STYLE_DNA },
     dietary: { halal: false, kosher: false, vegan: false, vegetarian: false, glutenFree: false, allergies: [], other: '' },
     accessibility: { stepFree: false, lowVision: false, lowHearing: false, seatingBreaks: false, notes: '' },
     religiousCultural: '',
@@ -213,7 +225,19 @@ const store = (() => {
   return {
     emptyProfile,
     profile: {
-      load: (e) => ({ ...emptyProfile(), ...(readJSON(K.profile(e), {}) || {}) }),
+      load: (e) => {
+        const defaults = emptyProfile();
+        const saved = readJSON(K.profile(e), {}) || {};
+        return {
+          ...defaults,
+          ...saved,
+          dietary: { ...defaults.dietary, ...(saved.dietary || {}) },
+          accessibility: { ...defaults.accessibility, ...(saved.accessibility || {}) },
+          medical: { ...defaults.medical, ...(saved.medical || {}) },
+          family: { ...defaults.family, ...(saved.family || {}) },
+          styleDNA: normalizeStyleDNA(saved.styleDNA),
+        };
+      },
       save: (e, v) => { localStorage.setItem(K.profile(e), JSON.stringify(v)); notifySync(e); },
       clear: (e) => { localStorage.removeItem(K.profile(e)); notifySync(e); },
       needsOnboarding: (e) => {
@@ -857,6 +881,7 @@ Respond with ONLY the JSON object — no prose, no code fences.`;
     discover: 'Place discovery', reviews: 'Review research', select: 'Vibe selection',
     present: 'Itinerary presentation', repair: 'Itinerary repair',
     outfitPlan: 'Outfit board planning', outfitBoardCurate: 'Live-piece visual curation', outfitBoardAudit: 'Cutout-only visual audit',
+    outfitReferenceRank: 'Personalized outfit-reference ranking',
   };
   const numeric = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const usageFor = (model, usage = {}) => {
@@ -1136,21 +1161,23 @@ Rules: itinerary.days length MUST equal the trip's day count. "expect" MUST cove
     }
   };
 
-  const OUTFIT_PLAN_SYSTEM = `You are malem's travel wardrobe editor. Build one cohesive full-outfit direction per itinerary day from the supplied immutable trip context. Treat the original user input, saved profile, live weather, itinerary, and destination palette as one consistent source of truth. The UI will use the look's destination, activities, name, theme, and vibeWords to retrieve several photographs of complete outfits.
+  const OUTFIT_PLAN_SYSTEM = `You are malem's travel wardrobe editor. Build one cohesive, personally recognizable full-outfit direction per itinerary day from the supplied immutable trip context. Treat the original user input, saved Style DNA, live weather, itinerary moments, closet staples, and destination as one consistent source of truth. The UI will use the look's moments, activities, name, theme, pieces, and vibeWords to retrieve and visually rank several photographs of complete outfits.
 
 Rules:
 - The profile's wardrobePresentation and styleAgeBand are explicit styling instructions. If wardrobePresentation is "women", create ONLY women's garments, women's footwear, and women's accessories. Never substitute menswear, menswear sizing, or unisex items. If it is "men", do the equivalent for men. If it is "unisex", use gender-neutral pieces. Select silhouettes and styling appropriate to styleAgeBand without stereotyping.
-- destinationMeta.palette and destinationMeta.paletteNote are the LOCKED colour story chosen by the itinerary. Return capsulePalette as those exact hex values in the same order. Every piece.color must use a named colour from that colour story or a neutral needed to support it (ivory, cream, black, white, tan, or metallic). Do not introduce a competing colour palette.
+- profile.styleDNA is the traveler's editable taste contract. Repeat its archetypes, silhouettes, palette behavior, footwear, intensity, practicality, experimentation level, and avoid list visibly in the chosen pieces. Do not replace it with a generic destination aesthetic.
+- destinationMeta.palette and destinationMeta.paletteNote are inspiration, not a lock. Build capsulePalette primarily from profile.styleDNA.palettes and closetStaples, using destination colors only where they harmonize with the traveler's taste.
 - Honor every explicit modesty, accessibility, medical, sensory, family, budget, laundry, activity, and avoid constraint.
-- Weather and the actual activities for each day must visibly change the pieces, footwear, layers, and practical notes.
-- Create exactly one board for every itinerary day. Include any needed evening transition piece inside that day's board rather than creating another board.
+- Weather and every actual outfit moment for each day must visibly change the pieces, footwear, layers, and practical notes. Reference the named itinerary activities rather than broad labels such as "city day."
+- Create exactly one board for every itinerary day. Include a base outfit plus explicit transitionPieces for evening, rain, coverage, or activity changes when the day's moments require them.
 - Make looks cohesive but not repetitive. Reuse capsule pieces intentionally and identify them.
 - Describe 4–6 coordinated pieces as the practical recipe for the complete look. Do not write per-item image-search queries.
 - Make name, theme, activityNote, and vibeWords visually specific enough to drive a full-body outfit-inspiration search (for example beach resort, Milan city street style, museum day, or evening dinner).
+- Prefer pieces already named in profile.styleDNA.closetStaples when they satisfy the moment, and list them in closetMatches.
 - Write short editorial annotations suitable for a modern inspiration gallery. Favor specific fabrics, silhouettes, colors, textures, and practical footwear over brand names.
 
 Return STRICT JSON only:
-{"version":3,"contextSummary":["short immutable constraints"],"capsulePalette":["#hex"],"looks":[{"id":"day-1","day":1,"period":"day","name":"","why":"","weatherNote":"","activityNote":"","vibeWords":[""],"stylingNote":"","pieces":[{"part":"top|bottom|dress|outerwear|shoes|accessory","item":"","color":"","reason":""}],"reuse":["piece reused from another board"]}]}`;
+{"version":4,"contextSummary":["short immutable constraints"],"capsulePalette":["#hex"],"looks":[{"id":"day-1","day":1,"period":"day","name":"","why":"","weatherNote":"","activityNote":"","vibeWords":[""],"stylingNote":"","moments":[{"period":"morning|afternoon|evening","label":"","requirements":[""]}],"pieces":[{"part":"top|bottom|dress|outerwear|shoes|accessory","item":"","color":"","reason":""}],"transitionPieces":[{"forMoment":"","item":"","reason":""}],"closetMatches":[""],"reuse":["piece reused from another board"]}]}`;
 
   const OUTFIT_CURATE_SYSTEM = `You are malem's visual fashion editor. You will receive real web-image candidates grouped by wardrobe piece. Select exactly one candidate for every piece. Judge the visible image itself, not brand prestige.
 
@@ -1172,6 +1199,21 @@ Reject an image if it contains any visible person, face, body, skin, hand, limb,
 Return STRICT JSON only:
 {"audits":[{"pieceIndex":0,"reject":true,"reason":"visible torso wearing garment"}]}`;
 
+  const OUTFIT_REFERENCE_RANK_SYSTEM = `You are malem's multimodal outfit-reference ranker. Judge each complete outfit image against two separate contracts: the traveler's editable Style DNA and the named itinerary moments for this day.
+
+For every labeled candidate:
+- itineraryFit: activity, dress code, walking, weather, cultural coverage, and day-to-evening practicality;
+- tasteFit: archetype, silhouette, palette behavior, styling intensity, footwear, and explicit avoids;
+- weatherFit: visible layers, fabric weight, footwear, and exposure;
+- wearability: whether a real traveler could reproduce the look using the supplied piece brief and closet staples;
+- capsuleFit: compatibility with the other daily pieces and reused trip capsule;
+- reject: true only for a hard conflict such as wrong wardrobe presentation, unsafe footwear for the activity, incompatible exposure/coverage, or clearly wrong weather.
+
+Do not reward brand prestige, photography quality, body shape, age, ethnicity, attractiveness, or model identity. Return one assessment for every supplied candidate.
+
+Return STRICT JSON only:
+{"assessments":[{"candidateIndex":0,"itineraryFit":0.0,"tasteFit":0.0,"weatherFit":0.0,"wearability":0.0,"capsuleFit":0.0,"reject":false,"attributes":[""],"reason":""}]}`;
+
   const outfitContext = (trip, profile, weatherObj) => ({
     originalUserInput: trip.originalInput || '',
     trip: {
@@ -1184,10 +1226,14 @@ Return STRICT JSON only:
     profile,
     liveWeather: weatherObj || trip.weather || null,
     itinerary: trip.bundle?.itinerary || null,
+    outfitMoments: (trip.bundle?.itinerary?.days || []).map((day, index) => ({
+      day: index + 1,
+      ...deriveOutfitMoments(day, weatherObj || trip.weather || null),
+    })),
     destinationMeta: trip.bundle?.destinationMeta || null,
   });
 
-  const outfitPlanErrors = (plan, days) => {
+  const outfitPlanErrors = (plan, days, context = null) => {
     const errors = [];
     if (!Array.isArray(plan?.looks)) return ['looks is missing'];
     const dayLooks = plan.looks.filter(look => look?.period === 'day');
@@ -1198,6 +1244,13 @@ Return STRICT JSON only:
     plan.looks.forEach((look, index) => {
       if (!look?.id || !look?.name) errors.push(`look ${index + 1} is missing id or name`);
       if (!Array.isArray(look?.pieces) || look.pieces.length < 4 || look.pieces.length > 6) errors.push(`look ${index + 1} needs 4–6 pieces`);
+      if (!Array.isArray(look?.moments) || !look.moments.length) errors.push(`look ${index + 1} needs itinerary moments`);
+      const requiredMoment = context?.outfitMoments?.find((entry) => Number(entry.day) === Number(look?.day));
+      if (requiredMoment?.moments?.length > (look?.moments?.length || 0)) errors.push(`look ${index + 1} must represent every itinerary period`);
+      if (requiredMoment?.requirements?.includes('smart evening') && !(look?.transitionPieces || []).length) {
+        errors.push(`look ${index + 1} needs an evening transition piece`);
+      }
+      if (Number(days) > 1 && index > 0 && !(look?.reuse || []).length) errors.push(`look ${index + 1} must intentionally reuse a capsule piece`);
       (look?.pieces || []).forEach((piece, pieceIndex) => {
         if (!piece?.item) errors.push(`look ${index + 1}, piece ${pieceIndex + 1} needs an item`);
       });
@@ -1210,8 +1263,8 @@ Return STRICT JSON only:
     const models = store.ai.outfitPipeline.get();
     const runId = `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const context = outfitContext(trip, profile, weatherObj);
-    const contextHash = outfitRecommender.idFor(`full-look-board-v1:${JSON.stringify(context)}`);
-    if (!force && trip.bundle?.outfits?.version === 3 && trip.bundle?.outfits?.contextHash === contextHash && Array.isArray(trip.bundle.outfits.looks)) {
+    const contextHash = outfitRecommender.idFor(`full-look-board-v2:${JSON.stringify(context)}`);
+    if (!force && trip.bundle?.outfits?.version === 4 && trip.bundle?.outfits?.contextHash === contextHash && Array.isArray(trip.bundle.outfits.looks)) {
       return trip.bundle.outfits;
     }
     const variationNonce = crypto.randomUUID();
@@ -1220,24 +1273,17 @@ Return STRICT JSON only:
       user: `Immutable trip context:\n${JSON.stringify(context)}\n\nVariation nonce: ${variationNonce}. Create a new capsule direction that still obeys every constraint.`,
       maxTokens: 6500, stage: 'outfitPlan', runId, temperature: 0.75,
     });
-    let errors = outfitPlanErrors(result.json, trip.days);
-    const lockedPalette = (context.destinationMeta?.palette || []).map(color => String(color).toLowerCase());
-    if (lockedPalette.length && JSON.stringify((result.json?.capsulePalette || []).map(color => String(color).toLowerCase())) !== JSON.stringify(lockedPalette)) {
-      errors.push('capsulePalette must exactly match the itinerary destination palette');
-    }
+    let errors = outfitPlanErrors(result.json, trip.days, context);
     if (errors.length) {
       result = await openRouterJSON({
         model: models.plan, system: OUTFIT_PLAN_SYSTEM,
         user: `Immutable trip context:\n${JSON.stringify(context)}\n\nThe previous wardrobe JSON failed validation:\n- ${errors.join('\n- ')}\n\nPrevious JSON:\n${JSON.stringify(result.json)}\n\nReturn the complete corrected wardrobe JSON.`,
         maxTokens: 6500, stage: 'outfitPlan', runId, temperature: 0.15,
       });
-      errors = outfitPlanErrors(result.json, trip.days);
-      if (lockedPalette.length && JSON.stringify((result.json?.capsulePalette || []).map(color => String(color).toLowerCase())) !== JSON.stringify(lockedPalette)) {
-        errors.push('capsulePalette must exactly match the itinerary destination palette');
-      }
+      errors = outfitPlanErrors(result.json, trip.days, context);
       if (errors.length) throw new Error(`The outfit plan did not pass validation: ${errors.slice(0, 4).join('; ')}`);
     }
-    return { ...result.json, version: 3, contextHash, variationNonce, generatedAt: new Date().toISOString(), model: result.meta.model };
+    return { ...result.json, version: 4, contextHash, variationNonce, generatedAt: new Date().toISOString(), model: result.meta.model };
   };
 
   const curateOutfitBoard = async ({ trip, profile, plan, look, candidateGroups }) => {
@@ -1291,6 +1337,92 @@ Return STRICT JSON only:
     };
   };
 
+  const rerankOutfitReferences = async ({ trip, profile, look, moment, candidates }) => {
+    if (!hasOpenRouter() || !Array.isArray(candidates) || !candidates.length) return candidates || [];
+    const model = store.ai.outfitPipeline.get().curate;
+    const bounded = candidates.slice(0, 10);
+    const cacheKey = 'malem.outfitVisionAssessments.v1';
+    const contextId = outfitRecommender.idFor(JSON.stringify({
+      styleDNA: normalizeStyleDNA(profile.styleDNA),
+      wardrobePresentation: profile.wardrobePresentation,
+      look: { name: look.name, pieces: look.pieces, vibeWords: look.vibeWords },
+      moment,
+    }));
+    let cached = {};
+    try { cached = JSON.parse(localStorage.getItem(cacheKey)) || {}; } catch {}
+    const freshAssessment = (candidate) => {
+      const entry = cached[`${contextId}:${candidate.id}`];
+      return entry && Date.now() - Number(entry.savedAt) < (7 * 86400000) ? entry : null;
+    };
+    if (bounded.every(freshAssessment)) {
+      return bounded.map((candidate) => ({ ...candidate, ...freshAssessment(candidate).assessment }))
+        .filter((candidate) => !candidate.visionReject);
+    }
+    const content = [{
+      type: 'text',
+      text: `Traveler Style DNA:\n${JSON.stringify(normalizeStyleDNA(profile.styleDNA))}\n\nItinerary outfit moment:\n${JSON.stringify(moment)}\n\nPlanned look:\n${JSON.stringify(look)}\n\nWardrobe presentation: ${profile.wardrobePresentation || 'women'}. Evaluate every labeled complete-outfit image.`,
+    }];
+    bounded.forEach((candidate, candidateIndex) => {
+      content.push({ type: 'text', text: `candidateIndex ${candidateIndex}: ${candidate.title || candidate.query || 'live outfit reference'}` });
+      content.push({ type: 'image_url', image_url: { url: candidate.url } });
+    });
+    try {
+      const result = await openRouterJSON({
+        model,
+        stage: 'outfitReferenceRank',
+        runId: `outfit_reference_${Date.now()}`,
+        maxTokens: 2600,
+        temperature: 0.05,
+        messages: [
+          { role: 'system', content: OUTFIT_REFERENCE_RANK_SYSTEM },
+          { role: 'user', content },
+        ],
+      });
+      const assessments = new Map((result.json?.assessments || [])
+        .map((assessment) => [Number(assessment.candidateIndex), assessment]));
+      const enriched = bounded.map((candidate, index) => {
+        const assessment = assessments.get(index) || {};
+        const score = (value, fallback = .5) => Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : fallback));
+        return {
+          ...candidate,
+          visionItinerary: score(assessment.itineraryFit),
+          visionTaste: score(assessment.tasteFit),
+          visionWeather: score(assessment.weatherFit),
+          wearability: score(assessment.wearability),
+          capsuleMatch: score(assessment.capsuleFit),
+          visionReject: assessment.reject === true,
+          visionAttributes: Array.isArray(assessment.attributes) ? assessment.attributes.slice(0, 10) : [],
+          visionReason: String(assessment.reason || '').slice(0, 180),
+        };
+      });
+      try {
+        enriched.forEach((candidate) => {
+          cached[`${contextId}:${candidate.id}`] = {
+            savedAt: Date.now(),
+            assessment: {
+              visionItinerary: candidate.visionItinerary,
+              visionTaste: candidate.visionTaste,
+              visionWeather: candidate.visionWeather,
+              wearability: candidate.wearability,
+              capsuleMatch: candidate.capsuleMatch,
+              visionReject: candidate.visionReject,
+              visionAttributes: candidate.visionAttributes,
+              visionReason: candidate.visionReason,
+            },
+          };
+        });
+        const trimmed = Object.fromEntries(Object.entries(cached)
+          .sort((a, b) => Number(b[1]?.savedAt) - Number(a[1]?.savedAt))
+          .slice(0, 400));
+        localStorage.setItem(cacheKey, JSON.stringify(trimmed));
+      } catch {}
+      return enriched.filter((candidate) => !candidate.visionReject);
+    } catch (error) {
+      console.warn('Visual outfit ranking degraded:', error.message);
+      return bounded;
+    }
+  };
+
   const generateTrip = async (trip, profile, weatherObj, collaboration = null) => {
     const p = provider();
     if (p === 'openrouter') return await generateViaOpenRouter(trip, profile, weatherObj, collaboration);
@@ -1304,7 +1436,7 @@ Return STRICT JSON only:
 
   return {
     enabled, hasKey, hasOpenAI, hasClaude, hasOpenRouter, refreshOpenRouterStatus,
-    provider, parseTripViaGPT, generateTrip, createOutfitPlan, curateOutfitBoard,
+    provider, parseTripViaGPT, generateTrip, createOutfitPlan, curateOutfitBoard, rerankOutfitReferences,
   };
 })();
 
@@ -1435,15 +1567,19 @@ const pinterest = (() => {
   const buildQueries = (trip, profile, look, itineraryDay) => {
     const location = locationLabel(trip);
     const audience = profile.wardrobePresentation === 'men' ? "men's" : profile.wardrobePresentation === 'unisex' ? 'unisex' : "women's";
-    const ageStyle = profile.styleAgeBand === 'teen' ? 'teen' : profile.styleAgeBand === 'mature' ? 'mature' : '';
     const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
-    const setting = settingFor(look, itineraryDay, trip);
-    const vibe = [...(look?.vibeWords || []), look?.theme, look?.name].filter(Boolean).join(' ');
     const extra = store.pinterest.extraKeywords.get();
-    return [
-      `${location} ${trip.season || ''} ${setting} ${audience} ${ageStyle} ${modest} full outfit inspiration ${extra}`,
-      `${location} ${vibe} ${audience} ${modest} full body travel outfit lookbook ${extra}`,
-    ].map(query => normalize(uniqueWords(query))).filter((query, index, all) => query && all.indexOf(query) === index).slice(0, 2);
+    const moment = deriveOutfitMoments(itineraryDay || {}, trip.weather || null);
+    return buildPersonalizedQueries({
+      location,
+      season: trip.season || '',
+      audience: `${audience} ${profile.styleAgeBand === 'teen' ? 'teen' : profile.styleAgeBand === 'mature' ? 'mature' : ''}`,
+      modest,
+      look,
+      moment,
+      styleDNA: profile.styleDNA,
+      extra,
+    }).map(query => normalize(uniqueWords(query))).filter(Boolean).slice(0, 3);
   };
   const buildQuery = (trip, profile, look, itineraryDay) => buildQueries(trip, profile, look, itineraryDay)[0] || '';
   const searchURL = (query) => `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}&rs=typed`;
@@ -1512,8 +1648,8 @@ const pinterest = (() => {
 // deliberately browser-sized so personalization works on Pages without a new
 // database account or a heavyweight model download.
 const outfitRecommender = (() => {
-  const VECTOR_KEY = 'malem.outfitVectors.v2';
-  const EVENT_KEY = 'malem.outfitEvents.v2';
+  const VECTOR_KEY = 'malem.outfitVectors.v3';
+  const EVENT_KEY = 'malem.outfitEvents.v3';
   const TEXT_DIMS = 64;
   const MAX_VECTORS = 320;
   const MAX_EVENTS = 800;
@@ -1567,11 +1703,20 @@ const outfitRecommender = (() => {
     const trimmed = Object.fromEntries(Object.entries(db).sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, MAX_VECTORS));
     write(VECTOR_KEY, trimmed); return trimmed[id];
   };
-  const eventWeight = (type) => ({ save: 4.5, unsave: -4.5, hide: -5, open: 1.25, zoom: 1.75 }[type] || 0);
-  const record = (user, candidate, type) => {
+  const eventWeight = (type, reason = '') => feedbackEventWeight(type, reason);
+  const record = (user, candidate, type, metadata = {}) => {
     upsert(candidate);
     const list = events();
-    list.push({ user, itemId: candidate.id, type, at: Date.now(), session: sessionStorage.getItem('malem.outfitSession') || '' });
+    list.push({
+      user,
+      itemId: candidate.id,
+      type,
+      reason: String(metadata.reason || '').slice(0, 40),
+      lookId: String(metadata.lookId || '').slice(0, 80),
+      momentId: String(metadata.momentId || '').slice(0, 80),
+      at: Date.now(),
+      session: sessionStorage.getItem('malem.outfitSession') || '',
+    });
     write(EVENT_KEY, list.slice(-MAX_EVENTS));
   };
   const isSaved = (user, itemId) => {
@@ -1583,7 +1728,7 @@ const outfitRecommender = (() => {
     const mine = list.filter(e => e.user === user && db[e.itemId]);
     const weighted = mine.map(e => {
       const ageDays = Math.max(0, (now - e.at) / 86400000);
-      return { entry: db[e.itemId], weight: eventWeight(e.type) * Math.exp(-ageDays / 120) };
+      return { entry: db[e.itemId], weight: eventWeight(e.type, e.reason) * Math.exp(-ageDays / 120) };
     }).filter(x => x.weight);
     return {
       text: centroid(weighted.map(x => ({ vector: x.entry.text, weight: x.weight }))),
@@ -1593,12 +1738,7 @@ const outfitRecommender = (() => {
   };
   const directAffinity = (user, itemId) => {
     const relevant = events().filter(e => e.user === user && e.itemId === itemId).slice(-8);
-    return Math.tanh(relevant.reduce((sum, e) => sum + eventWeight(e.type), 0) / 5);
-  };
-  const crowdAffinity = (user, itemId) => {
-    const others = events().filter(e => e.user !== user && e.itemId === itemId);
-    if (!others.length) return 0;
-    return Math.tanh(others.reduce((sum, e) => sum + eventWeight(e.type), 0) / 8);
+    return Math.tanh(relevant.reduce((sum, e) => sum + eventWeight(e.type, e.reason), 0) / 5);
   };
   const rank = (candidates, intent, user, limit = 6) => {
     const target = textVector(intent); const profile = userProfile(user); const db = vectorDb();
@@ -1609,8 +1749,29 @@ const outfitRecommender = (() => {
       const textMatch = (cosine(candidate.text, target) + 1) / 2;
       const visualMatch = profile.visual && stored?.visual ? (cosine(stored.visual, profile.visual) + 1) / 2 : .5;
       const tasteMatch = profile.text ? (cosine(candidate.text, profile.text) + 1) / 2 : .5;
-      const collaborative = Math.max(0, Math.min(1, .5 + (.28 * directAffinity(user, candidate.id)) + (.12 * crowdAffinity(user, candidate.id)) + (.2 * (tasteMatch - .5))));
-      return { ...candidate, textMatch, visualMatch, collaborative, score: (.5 * textMatch) + (.3 * visualMatch) + (.2 * collaborative) };
+      const personalAffinity = Math.max(0, Math.min(1, .5 + (.34 * directAffinity(user, candidate.id)) + (.26 * (tasteMatch - .5))));
+      const hasVision = Number.isFinite(candidate.visionTaste) && Number.isFinite(candidate.visionItinerary);
+      const tasteScore = hasVision ? (.65 * candidate.visionTaste) + (.2 * tasteMatch) + (.15 * visualMatch)
+        : (.55 * tasteMatch) + (.45 * visualMatch);
+      const itineraryScore = hasVision ? (.7 * candidate.visionItinerary) + (.3 * textMatch) : textMatch;
+      const weatherScore = hasVision ? candidate.visionWeather : textMatch;
+      const capsuleScore = hasVision
+        ? (.6 * candidate.capsuleMatch) + (.4 * candidate.wearability)
+        : (.55 * personalAffinity) + (.45 * textMatch);
+      const score = (.35 * tasteScore) + (.3 * itineraryScore) + (.15 * weatherScore)
+        + (.15 * capsuleScore) + (.05 * personalAffinity);
+      return {
+        ...candidate,
+        textMatch,
+        visualMatch,
+        tasteMatch,
+        personalAffinity,
+        itineraryScore,
+        weatherScore,
+        capsuleScore,
+        collaborative: personalAffinity,
+        score,
+      };
     });
     // Maximal marginal relevance prevents near-identical search-result clusters.
     const selected = [];
@@ -1624,14 +1785,14 @@ const outfitRecommender = (() => {
     }
     return { candidates: selected, profile };
   };
-  // A 4x4 RGB grid is a small image embedding: it captures palette and visual
-  // layout well enough for similarity ranking while staying fast and private.
+  // An 8x8 RGB grid is the private fallback visual descriptor. Live boards add
+  // multimodal fashion attributes; this local vector keeps degraded mode useful.
   const captureVisual = (img, candidate) => {
     try {
-      const canvas = document.createElement('canvas'); canvas.width = 4; canvas.height = 4;
+      const canvas = document.createElement('canvas'); canvas.width = 8; canvas.height = 8;
       const context = canvas.getContext('2d', { willReadFrequently: true });
-      context.drawImage(img, 0, 0, 4, 4);
-      const pixels = context.getImageData(0, 0, 4, 4).data; const values = [];
+      context.drawImage(img, 0, 0, 8, 8);
+      const pixels = context.getImageData(0, 0, 8, 8).data; const values = [];
       for (let i = 0; i < pixels.length; i += 4) values.push(pixels[i] / 255, pixels[i + 1] / 255, pixels[i + 2] / 255);
       upsert(candidate, normalize(values));
     } catch (error) {
@@ -2178,7 +2339,12 @@ const auth = (() => {
     if (!user || !envelope?.trip?.id) return null;
     const localTrips = store.trips.load(user.email);
     const local = localTrips.find((trip) => trip.id === envelope.trip.id);
-    const trip = { ...envelope.trip, ...(local?.llmRun ? { llmRun: local.llmRun } : {}) };
+    const localOutfits = local?.bundle?.outfits;
+    const trip = {
+      ...envelope.trip,
+      ...(localOutfits ? { bundle: { ...(envelope.trip.bundle || {}), outfits: localOutfits } } : {}),
+      ...(local?.llmRun ? { llmRun: local.llmRun } : {}),
+    };
     const next = localTrips.some((candidate) => candidate.id === trip.id)
       ? localTrips.map((candidate) => candidate.id === trip.id ? trip : candidate)
       : [...localTrips, trip];
@@ -2240,7 +2406,12 @@ const auth = (() => {
     (response.trips || []).forEach((envelope) => {
       if (!envelope?.trip) return;
       const localTrace = localById.get(envelope.trip.id)?.llmRun;
-      const trip = localTrace ? { ...envelope.trip, llmRun: localTrace } : envelope.trip;
+      const localOutfits = localById.get(envelope.trip.id)?.bundle?.outfits;
+      const trip = {
+        ...envelope.trip,
+        ...(localOutfits ? { bundle: { ...(envelope.trip.bundle || {}), outfits: localOutfits } } : {}),
+        ...(localTrace ? { llmRun: localTrace } : {}),
+      };
       serverTrips.push(trip);
       tripRecords.set(trip.id, { ...envelope, trip });
     });
@@ -3030,6 +3201,24 @@ const ui = (() => {
     p.budget = f.budget.value; p.pace = f.pace.value;
     p.wardrobePresentation = f.wardrobePresentation.value || 'women';
     p.styleAgeBand = f.styleAgeBand.value || 'adult';
+    const me = auth.current();
+    const currentStyle = me ? store.profile.load(me.email).styleDNA : DEFAULT_STYLE_DNA;
+    p.styleDNA = normalizeStyleDNA({
+      ...currentStyle,
+      completed: $$('[data-style-dna] input:checked', f).length > 0 || Boolean(currentStyle.completed),
+      source: currentStyle.source || 'manual',
+      archetypes: $$('[data-style-dna="archetypes"] input:checked', f).map(i => i.value),
+      silhouettes: $$('[data-style-dna="silhouettes"] input:checked', f).map(i => i.value),
+      palettes: $$('[data-style-dna="palettes"] input:checked', f).map(i => i.value),
+      footwear: $$('[data-style-dna="footwear"] input:checked', f).map(i => i.value),
+      materials: parseList(f.styleMaterials.value),
+      avoid: parseList(f.styleAvoid.value),
+      closetStaples: parseList(f.closetStaples.value),
+      intensity: f.styleIntensity.value,
+      practicality: f.stylePracticality.value,
+      experimentation: f.styleExperimentation.value,
+      updatedAt: new Date().toISOString(),
+    });
     p.dietary.halal      = $('[data-diet="halal"]', f).checked;
     p.dietary.kosher     = $('[data-diet="kosher"]', f).checked;
     p.dietary.vegan      = $('[data-diet="vegan"]', f).checked;
@@ -3059,6 +3248,25 @@ const ui = (() => {
     f.budget.value = p.budget || 'mid'; f.pace.value = p.pace || 'balanced';
     f.wardrobePresentation.value = p.wardrobePresentation || 'women';
     f.styleAgeBand.value = p.styleAgeBand || 'adult';
+    const style = normalizeStyleDNA(p.styleDNA);
+    Object.entries({
+      archetypes: style.archetypes,
+      silhouettes: style.silhouettes,
+      palettes: style.palettes,
+      footwear: style.footwear,
+    }).forEach(([group, selected]) => {
+      $$(`[data-style-dna="${group}"] input`, f).forEach(input => { input.checked = selected.includes(input.value); });
+    });
+    f.styleIntensity.value = style.intensity;
+    f.stylePracticality.value = style.practicality;
+    f.styleExperimentation.value = style.experimentation;
+    f.styleMaterials.value = [...style.materials, ...style.patterns].join(', ');
+    f.styleAvoid.value = style.avoid.join(', ');
+    f.closetStaples.value = style.closetStaples.join(', ');
+    $$('[data-style-output]', f).forEach(output => {
+      const input = f[`style${output.dataset.styleOutput[0].toUpperCase()}${output.dataset.styleOutput.slice(1)}`];
+      if (input) output.textContent = input.value;
+    });
     $('[data-diet="halal"]', f).checked      = !!p.dietary.halal;
     $('[data-diet="kosher"]', f).checked     = !!p.dietary.kosher;
     $('[data-diet="vegan"]', f).checked      = !!p.dietary.vegan;
@@ -3099,6 +3307,14 @@ const ui = (() => {
     showScreen('onboarding');
   };
   const initProfileForm = () => {
+    $('#profile-form').addEventListener('input', (event) => {
+      if (event.target.matches('input[type="range"][name^="style"]')) {
+        const key = event.target.name.replace(/^style/, '');
+        const normalized = key[0].toLowerCase() + key.slice(1);
+        const output = $(`[data-style-output="${normalized}"]`, $('#profile-form'));
+        if (output) output.textContent = event.target.value;
+      }
+    });
     $('#profile-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const me = auth.current(); if (!me) return;
@@ -3813,6 +4029,119 @@ const ui = (() => {
   const itemQuery = (v) => String(v || '').split(/\bor\b/i)[0].replace(/,.*$/, '').trim();
   let outfitRenderEpoch = 0;
 
+  const styleDNASummary = (profile) => {
+    const style = normalizeStyleDNA(profile.styleDNA);
+    const primary = [
+      ...style.archetypes.slice(0, 2),
+      ...style.silhouettes.slice(0, 1).map((value) => `${value} silhouettes`),
+      ...style.palettes.slice(0, 1).map((value) => `${value} palette`),
+    ];
+    return primary.length ? primary.join(' · ') : 'Taste not calibrated yet';
+  };
+
+  const styleLabMarkup = (profile) => {
+    const style = normalizeStyleDNA(profile.styleDNA);
+    return `<section class="style-dna-card">
+      <div class="style-dna-card-copy">
+        <span class="eyebrow">Your Style DNA</span>
+        <strong>${escapeHtml(styleDNASummary(profile))}</strong>
+        <small>${style.completed ? `${style.practicality}% practical · ${style.experimentation}% experimental` : 'Teach Malem what feels like you before ranking this trip.'}</small>
+      </div>
+      <div class="style-dna-actions">
+        <button type="button" class="btn ghost" data-open-style-lab>${style.completed ? 'Retune taste' : 'Calibrate taste'}</button>
+        <button type="button" class="text-button" data-open-style-profile>Fine-tune details</button>
+      </div>
+    </section>
+    <section class="style-lab" data-style-lab hidden>
+      <div class="style-lab-head">
+        <div>
+          <span class="eyebrow">Pinterest-assisted calibration</span>
+          <h3>Which directions feel like you?</h3>
+          <p>Use your Pinterest boards as a visual reference while choosing. Malem stores only the Style DNA you confirm—not your boards, Pins, or Pinterest login.</p>
+        </div>
+        <button type="button" class="close-x" data-close-style-lab>Close</button>
+      </div>
+      <div class="style-calibration-grid">
+        ${STYLE_OPTIONS.archetypes.map((archetype) => {
+          const positive = style.archetypes.includes(archetype);
+          const negative = style.avoid.includes(archetype);
+          return `<article class="style-calibration-card" data-style-card="${escapeAttr(archetype)}" data-choice="${positive ? 'more' : negative ? 'less' : ''}">
+            <div class="style-calibration-image"><div class="pin-skeleton"></div></div>
+            <strong>${escapeHtml(titleCase(archetype))}</strong>
+            <div>
+              <button type="button" data-style-choice="more" aria-pressed="${positive}">More me</button>
+              <button type="button" data-style-choice="less" aria-pressed="${negative}">Less me</button>
+            </div>
+          </article>`;
+        }).join('')}
+      </div>
+      <div class="style-lab-footer">
+        <p class="hint">You can change silhouettes, colors, footwear, closet staples, and experimentation level in your full profile.</p>
+        <button type="button" class="btn primary" data-save-style-lab>Use this Style DNA</button>
+      </div>
+    </section>`;
+  };
+
+  const bindStyleLab = (root, me, profile) => {
+    const lab = root.querySelector('[data-style-lab]');
+    root.querySelector('[data-open-style-profile]')?.addEventListener('click', openProfileSheet);
+    root.querySelector('[data-close-style-lab]')?.addEventListener('click', () => { lab.hidden = true; });
+    root.querySelector('[data-open-style-lab]')?.addEventListener('click', async () => {
+      lab.hidden = false;
+      lab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      pinterest.beginBatch(STYLE_OPTIONS.archetypes.length);
+      await Promise.all(STYLE_OPTIONS.archetypes.map(async (archetype) => {
+        const card = lab.querySelector(`[data-style-card="${archetype}"]`);
+        if (!card || card.dataset.loaded) return;
+        card.dataset.loaded = 'true';
+        const pins = await pinterest.searchPins(`${archetype} complete outfit inspiration editorial style`);
+        const pin = pins[0];
+        const host = card.querySelector('.style-calibration-image');
+        if (!pin?.image) {
+          host.innerHTML = `<span>${escapeHtml(titleCase(archetype))}</span>`;
+          return;
+        }
+        host.innerHTML = `<img src="${escapeAttr(pin.image)}" data-proxy-src="${escapeAttr(proxiedImage(pin.image))}" alt="${escapeAttr(`${archetype} outfit direction`)}" loading="lazy" />`;
+        const image = host.querySelector('img');
+        image.addEventListener('error', () => {
+          if (!image.dataset.triedProxy && image.dataset.proxySrc) {
+            image.dataset.triedProxy = 'true';
+            image.src = image.dataset.proxySrc;
+          }
+        });
+      }));
+    });
+    lab?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-style-choice]');
+      if (!button) return;
+      const card = button.closest('[data-style-card]');
+      const next = card.dataset.choice === button.dataset.styleChoice ? '' : button.dataset.styleChoice;
+      card.dataset.choice = next;
+      card.querySelectorAll('[data-style-choice]').forEach((choice) => {
+        choice.setAttribute('aria-pressed', String(choice.dataset.styleChoice === next));
+      });
+    });
+    root.querySelector('[data-save-style-lab]')?.addEventListener('click', async () => {
+      const latest = store.profile.load(me.email);
+      const current = normalizeStyleDNA(latest.styleDNA);
+      const choices = [...lab.querySelectorAll('[data-style-card]')];
+      const positive = choices.filter((card) => card.dataset.choice === 'more').map((card) => card.dataset.styleCard);
+      const negative = choices.filter((card) => card.dataset.choice === 'less').map((card) => card.dataset.styleCard);
+      latest.styleDNA = normalizeStyleDNA({
+        ...current,
+        completed: true,
+        source: 'pinterest-assisted',
+        archetypes: positive,
+        avoid: [...current.avoid.filter((value) => !STYLE_OPTIONS.archetypes.includes(value)), ...negative],
+        updatedAt: new Date().toISOString(),
+      });
+      store.profile.save(me.email, latest);
+      await auth.flush();
+      pinterest.clearCache();
+      renderOutfits(true);
+    });
+  };
+
   const renderLiveVisionBoards = async ({ me, trip, profile, itin, destination, epoch, forcePlan = false }) => {
     const root = $('#outfits-output');
     $('#outfits-source').textContent = 'Each board uses current, real full-outfit references matched to the destination, itinerary, weather, and requested vibe. Images are sourced from Pinterest and fashion image search—not generated.';
@@ -3828,6 +4157,7 @@ const ui = (() => {
       if (epoch !== outfitRenderEpoch) return;
       const savedBundle = { ...(trip.bundle || {}), outfits: plan };
       store.trips.update(me.email, trip.id, { bundle: savedBundle });
+      await auth.flush();
     } catch (error) {
       if (epoch !== outfitRenderEpoch) return;
       root.innerHTML = `<div class="recommendation-empty"><strong>The outfit planner could not finish.</strong><p>${escapeHtml(error.message || 'Unknown error')}</p><button type="button" class="btn ghost" data-retry-outfits>Try again</button></div>`;
@@ -3837,10 +4167,11 @@ const ui = (() => {
 
     const looks = plan.looks.slice(0, Number(trip.days));
     const palette = (plan.capsulePalette || []).filter(color => /^#[0-9a-f]{3,8}$/i.test(color)).slice(0, 6);
-    root.innerHTML = `<div class="recommendation-explainer outfit-workflow">
+    root.innerHTML = `${styleLabMarkup(profile)}
+    <div class="recommendation-explainer outfit-workflow">
       <div><span class="algorithm-dot text"></span><strong>Live context</strong><small>request + profile + itinerary + weather</small></div>
-      <div><span class="algorithm-dot visual"></span><strong>Complete looks</strong><small>destination + activity + vibe searches</small></div>
-      <div><span class="algorithm-dot behavior"></span><strong>Reference gallery</strong><small>several full-outfit ideas per day</small></div>
+      <div><span class="algorithm-dot visual"></span><strong>Multimodal fit</strong><small>Style DNA + moment + weather scoring</small></div>
+      <div><span class="algorithm-dot behavior"></span><strong>Learning gallery</strong><small>Love + More like this + reason feedback</small></div>
     </div>
     <div class="outfit-context-strip">
       <div>${(plan.contextSummary || []).map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>
@@ -3853,6 +4184,11 @@ const ui = (() => {
             <div>
               <span class="eyebrow">Day ${escapeHtml(look.day)} · ${escapeHtml(destination)}</span>
               <h3>${escapeHtml(look.name)}</h3>
+              <div class="board-direction-tabs" aria-label="Board direction">
+                <button type="button" data-board-direction="you" aria-pressed="true">Most like you</button>
+                <button type="button" data-board-direction="stretch" aria-pressed="false">Style stretch</button>
+                <button type="button" data-board-direction="destination" aria-pressed="false">Destination-forward</button>
+              </div>
             </div>
             <span class="live-chip">live-sourced</span>
           </header>
@@ -3865,18 +4201,25 @@ const ui = (() => {
               <span>☁ ${escapeHtml(look.weatherNote || 'Weather-aware layers')}</span>
               <span>⌁ ${escapeHtml(look.activityNote || 'Matched to the day’s route')}</span>
             </div>
+            <div class="board-moments">
+              ${(look.moments || []).map((moment) => `<span><b>${escapeHtml(moment.period || 'day')}</b>${escapeHtml(moment.label || (moment.requirements || []).join(' · '))}</span>`).join('')}
+            </div>
+            ${(look.closetMatches || []).length ? `<div class="board-closet"><span>From your closet</span><p>${escapeHtml(look.closetMatches.join(' · '))}</p></div>` : ''}
             <div class="board-palette" aria-label="Capsule colour palette">${palette.map(color => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</div>
             <button type="button" class="text-button" data-refresh-board>Refresh this board</button>
           </footer>
         </article>`).join('')}
     </div>`;
+    bindStyleLab(root, me, profile);
 
     const cardForLook = (lookId) => [...root.querySelectorAll('[data-board-look]')]
       .find(card => card.dataset.boardLook === String(lookId));
     const claimedReferences = new Set();
+    const livePools = new Map();
     const retrieveCandidates = async (look) => {
       const dayNumber = Number(look.day || look.dayIndex) || 1;
       const itineraryDay = itin.days?.[Math.max(0, dayNumber - 1)] || null;
+      const moment = deriveOutfitMoments(itineraryDay || {}, trip.weather || null);
       const queries = pinterest.buildQueries(tripForOutfits, profile, look, itineraryDay);
       const groups = await Promise.all(queries.map(query => pinterest.searchPins(query)));
       const seen = new Set();
@@ -3885,15 +4228,34 @@ const ui = (() => {
         url: pin.image,
         title: pin.title || `${look.name} full outfit inspiration`,
         query: queries[queryIndex],
-        tags: [destination, trip.season, look.name, look.theme, ...(look.vibeWords || [])].filter(Boolean),
+        tags: [
+          destination, trip.season, look.name, look.theme, ...(look.vibeWords || []),
+          ...moment.requirements, styleDNAKeywords(profile.styleDNA),
+        ].filter(Boolean),
         resultIndex,
         searchUrl: pin.sourceUrl || pinterest.searchURL(queries[queryIndex]),
       }))).filter(candidate => candidate.url && !seen.has(candidate.url) && seen.add(candidate.url));
-      const intent = [destination, trip.season, look.name, look.why, look.activityNote, look.weatherNote, ...(look.vibeWords || [])].filter(Boolean).join(' ');
+      const intent = buildOutfitIntent({
+        destination,
+        season: trip.season,
+        look,
+        moment,
+        profile,
+        extra: store.pinterest.extraKeywords.get(),
+      });
       const unclaimed = candidates.filter(candidate => !claimedReferences.has(candidate.url));
-      const ranked = outfitRecommender.rank(unclaimed.length >= 3 ? unclaimed : candidates, intent, me.email, 6);
+      const preliminary = outfitRecommender.rank(unclaimed.length >= 3 ? unclaimed : candidates, intent, me.email, 10);
+      const visuallyAssessed = await ai.rerankOutfitReferences({
+        trip: tripForOutfits,
+        profile,
+        look,
+        moment,
+        candidates: preliminary.candidates,
+      });
+      const allCandidates = visuallyAssessed.length >= 3 ? visuallyAssessed : preliminary.candidates;
+      const ranked = outfitRecommender.rank(allCandidates, intent, me.email, 6);
       ranked.candidates.forEach(candidate => claimedReferences.add(candidate.url));
-      return { candidates: ranked.candidates, queries, intent };
+      return { candidates: ranked.candidates, allCandidates, queries, intent, baseIntent: intent, moment, direction: 'you' };
     };
     const renderBoard = (card, look, context) => {
       const canvas = card.querySelector('.vision-board-canvas');
@@ -3904,15 +4266,31 @@ const ui = (() => {
       }
       canvas.innerHTML = `<div class="board-paper-texture" aria-hidden="true"></div>
         <div class="board-title-note">${escapeHtml((look.vibeWords || []).slice(0, 3).join(' · ') || look.stylingNote || 'travel capsule')}</div>
-        <div class="board-color-story" aria-label="Locked trip colour story">${palette.map(color => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</div>
+        <div class="board-color-story" aria-label="Personalized capsule colour story">${palette.map(color => `<i style="--swatch:${escapeHtml(color)}"></i>`).join('')}</div>
         <div class="board-sticker">${escapeHtml(profile.wardrobePresentation === 'men' ? 'men’s edit' : profile.wardrobePresentation === 'unisex' ? 'unisex edit' : 'women’s edit')}</div>
         <div class="outfit-reference-grid">
           ${context.candidates.map((candidate, index) => `
-            <a class="outfit-reference reference-${index + 1}" href="${escapeHtml(safeExternalUrl(candidate.searchUrl) || pinterest.searchURL(candidate.query))}" target="_blank" rel="noopener" aria-label="Open source for full outfit reference ${index + 1}">
+            <article class="outfit-reference reference-${index + 1}" data-live-candidate-id="${escapeAttr(candidate.id)}">
               <span class="cutout-tape" aria-hidden="true"></span>
-              <img src="${escapeHtml(candidate.url)}" data-proxy-src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(`${look.name} full outfit reference ${index + 1}`)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
-              <span>full-look reference ${index + 1}</span>
-            </a>`).join('')}
+              <a class="outfit-reference-image" data-open-reference href="${escapeHtml(safeExternalUrl(candidate.searchUrl) || pinterest.searchURL(candidate.query))}" target="_blank" rel="noopener" aria-label="Open source for full outfit reference ${index + 1}">
+                <img src="${escapeHtml(candidate.url)}" data-proxy-src="${escapeHtml(proxiedImage(candidate.url))}" alt="${escapeHtml(`${look.name} full outfit reference ${index + 1}`)}" loading="${index < 3 ? 'eager' : 'lazy'}" />
+              </a>
+              <span class="outfit-reference-label">reference ${index + 1} · ${Math.round(candidate.score * 100)}% match</span>
+              <small class="outfit-match-why">${escapeHtml(matchExplanation({ candidate, moment: context.moment, styleDNA: profile.styleDNA }))}</small>
+              <div class="outfit-reference-actions">
+                <button type="button" data-live-outfit-action="love">Love</button>
+                <button type="button" data-live-outfit-action="save" aria-pressed="${outfitRecommender.isSaved(me.email, candidate.id)}">${outfitRecommender.isSaved(me.email, candidate.id) ? 'Saved' : 'Save'}</button>
+                <button type="button" data-live-outfit-action="more_like_this">More like this</button>
+                <button type="button" data-live-outfit-action="dislike">Not for me</button>
+              </div>
+              <div class="outfit-feedback-reasons" hidden>
+                ${[
+                  ['too_dressy', 'Too dressy'], ['too_casual', 'Too casual'],
+                  ['wrong_silhouette', 'Wrong shape'], ['wrong_color', 'Wrong color'],
+                  ['uncomfortable', 'Looks uncomfortable'], ['wrong_activity', 'Wrong for the plan'],
+                ].map(([reason, label]) => `<button type="button" data-live-feedback-reason="${reason}">${label}</button>`).join('')}
+              </div>
+            </article>`).join('')}
         </div>
         <div class="board-editor-note">${escapeHtml(look.stylingNote || 'Use these complete looks as references, then adapt the details to your capsule.')}</div>`;
       canvas.querySelectorAll('.outfit-reference img').forEach((image, index) => {
@@ -3933,6 +4311,7 @@ const ui = (() => {
       const card = cardForLook(look.id);
       if (!card || epoch !== outfitRenderEpoch) return;
       const context = await retrieveCandidates(look);
+      livePools.set(String(look.id), context);
       if (epoch === outfitRenderEpoch && card.isConnected) renderBoard(card, look, context);
     };
 
@@ -3942,6 +4321,72 @@ const ui = (() => {
       pinterest.clearCache();
       renderOutfits(true);
     }));
+    root.addEventListener('click', (event) => {
+      const reference = event.target.closest('[data-live-candidate-id]');
+      const board = event.target.closest('[data-board-look]');
+      const context = board && livePools.get(String(board.dataset.boardLook));
+      const look = looks.find((candidate) => String(candidate.id) === String(board?.dataset.boardLook));
+      const directionButton = event.target.closest('[data-board-direction]');
+      if (directionButton && context && look) {
+        context.direction = directionButton.dataset.boardDirection;
+        const directionText = context.direction === 'stretch'
+          ? `editorial style stretch ${normalizeStyleDNA(profile.styleDNA).experimentation}% experimentation`
+          : context.direction === 'destination'
+            ? `${destination} local fashion destination-forward ${look.name} ${(look.vibeWords || []).join(' ')}`
+            : styleDNAKeywords(profile.styleDNA);
+        context.intent = `${context.baseIntent} ${directionText}`;
+        let rankedPool = outfitRecommender.rank(context.allCandidates, context.intent, me.email, 6).candidates;
+        if (context.direction === 'stretch') {
+          rankedPool = [...rankedPool].sort((a, b) =>
+            ((.55 * b.itineraryScore) + (.3 * (1 - b.personalAffinity)) + (.15 * b.weatherScore))
+            - ((.55 * a.itineraryScore) + (.3 * (1 - a.personalAffinity)) + (.15 * a.weatherScore)));
+        } else if (context.direction === 'destination') {
+          rankedPool = [...rankedPool].sort((a, b) =>
+            ((.55 * b.itineraryScore) + (.3 * b.textMatch) + (.15 * b.capsuleScore))
+            - ((.55 * a.itineraryScore) + (.3 * a.textMatch) + (.15 * a.capsuleScore)));
+        }
+        context.candidates = rankedPool;
+        board.querySelectorAll('[data-board-direction]').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button === directionButton));
+        });
+        renderBoard(board, look, context);
+        return;
+      }
+      const candidate = context?.candidates.find((entry) => entry.id === reference?.dataset.liveCandidateId);
+      if (!candidate || !look) return;
+      if (event.target.closest('[data-open-reference]')) {
+        outfitRecommender.record(me.email, candidate, 'open', { lookId: look.id, momentId: context.moment?.moments?.[0]?.id });
+        return;
+      }
+      const actionButton = event.target.closest('[data-live-outfit-action]');
+      if (actionButton) {
+        const action = actionButton.dataset.liveOutfitAction;
+        if (action === 'dislike') {
+          const reasons = reference.querySelector('.outfit-feedback-reasons');
+          reasons.hidden = !reasons.hidden;
+          return;
+        }
+        const recordedAction = action === 'save' && outfitRecommender.isSaved(me.email, candidate.id) ? 'unsave' : action;
+        outfitRecommender.record(me.email, candidate, recordedAction, { lookId: look.id, momentId: context.moment?.moments?.[0]?.id });
+        if (action === 'love') actionButton.setAttribute('aria-pressed', 'true');
+        if (action === 'more_like_this') {
+          context.intent = `${context.intent} ${candidate.title || ''} ${(candidate.visionAttributes || []).join(' ')}`;
+          context.candidates = outfitRecommender.rank(context.candidates, context.intent, me.email, 6).candidates;
+        }
+        renderBoard(board, look, context);
+        return;
+      }
+      const reasonButton = event.target.closest('[data-live-feedback-reason]');
+      if (reasonButton) {
+        outfitRecommender.record(me.email, candidate, 'dislike', {
+          reason: reasonButton.dataset.liveFeedbackReason,
+          lookId: look.id,
+          momentId: context.moment?.moments?.[0]?.id,
+        });
+        context.candidates = context.candidates.filter((entry) => entry.id !== candidate.id);
+        renderBoard(board, look, context);
+      }
+    });
 
     let cursor = 0;
     const worker = async () => {
@@ -3987,10 +4432,11 @@ const ui = (() => {
     const root = $('#outfits-output');
     const stats = outfitRecommender.stats(user);
 
-    root.innerHTML = `<div class="recommendation-explainer">
-      <div><span class="algorithm-dot visual"></span><strong>Visual vectors</strong><small data-vector-count>${stats.indexed} images indexed</small></div>
-      <div><span class="algorithm-dot text"></span><strong>Text retrieval</strong><small>destination + weather + wardrobe</small></div>
-      <div><span class="algorithm-dot behavior"></span><strong>Collaborative rank</strong><small data-signal-count>${stats.signals} personal signals</small></div>
+    root.innerHTML = `${styleLabMarkup(profile)}
+    <div class="recommendation-explainer">
+      <div><span class="algorithm-dot visual"></span><strong>Private visual index</strong><small data-vector-count>${stats.indexed} images indexed</small></div>
+      <div><span class="algorithm-dot text"></span><strong>Moment retrieval</strong><small>itinerary + weather + Style DNA</small></div>
+      <div><span class="algorithm-dot behavior"></span><strong>Personal taste</strong><small data-signal-count>${stats.signals} personal signals</small></div>
     </div>` + Object.keys(byDay).map(k => {
       const dayLooks = byDay[k]; const first = dayLooks[0];
       return `
@@ -4017,6 +4463,7 @@ const ui = (() => {
           }).join('')}
         </div>`;
     }).join('');
+    bindStyleLab(root, me, profile);
 
     const updateRecommenderStats = () => {
       const current = outfitRecommender.stats(user);
@@ -4046,12 +4493,22 @@ const ui = (() => {
           </button>
           <div class="ranked-pin-meta">
             <strong>${escapeHtml(candidate.title)}</strong>
-            <span>${Math.round(candidate.textMatch * 100)}% text · ${Math.round(candidate.visualMatch * 100)}% visual · ${Math.round(candidate.collaborative * 100)}% taste</span>
+            <span>${Math.round(candidate.itineraryScore * 100)}% itinerary · ${Math.round(candidate.tasteMatch * 100)}% taste · ${Math.round(candidate.visualMatch * 100)}% visual</span>
+            <span>${escapeHtml(matchExplanation({ candidate, moment: context.moment, styleDNA: profile.styleDNA }))}</span>
           </div>
           <div class="pin-actions">
+            <button type="button" data-outfit-action="love">Love</button>
             <button type="button" data-outfit-action="save" aria-pressed="${saved}">${saved ? 'Saved' : 'Save'}</button>
+            <button type="button" data-outfit-action="more_like_this">More like this</button>
             <button type="button" data-outfit-action="open">Open source ↗</button>
-            <button type="button" data-outfit-action="hide">Hide</button>
+            <button type="button" data-outfit-action="dislike">Not for me</button>
+          </div>
+          <div class="outfit-feedback-reasons" hidden>
+            ${[
+              ['too_dressy', 'Too dressy'], ['too_casual', 'Too casual'],
+              ['wrong_silhouette', 'Wrong shape'], ['wrong_color', 'Wrong color'],
+              ['uncomfortable', 'Looks uncomfortable'], ['wrong_activity', 'Wrong for the plan'],
+            ].map(([reason, label]) => `<button type="button" data-outfit-feedback-reason="${reason}">${label}</button>`).join('')}
           </div>
         </article>`;
       }).join('');
@@ -4076,15 +4533,23 @@ const ui = (() => {
       const pieces = look.items.map(it => itemQuery(it.value)).join(' ');
       const modest = profile.modesty !== 'no-preference' ? 'modest' : '';
       const itineraryDay = itin.days?.[Math.max(0, Number(look.dayIndex || 1) - 1)] || null;
+      const moment = deriveOutfitMoments(itineraryDay || {}, trip.weather || null);
       const queries = pinterest.buildQueries(trip, profile, look, itineraryDay);
-      const intent = `${destination} ${trip.season || ''} ${look.theme} ${look.name} ${look.why || ''} ${pieces} ${modest} ${styleKeywords}`;
+      const intent = buildOutfitIntent({
+        destination,
+        season: trip.season,
+        look: { ...look, pieces: look.items },
+        moment,
+        profile,
+        extra: `${pieces} ${modest} ${styleKeywords}`,
+      });
       Promise.all(queries.map(query => pinterest.searchPins(query).then(pins => pins.slice(0, 12).map((pin, resultIndex) => ({
-        id: outfitRecommender.idFor(pin.image), url: pin.image, query, title: pin.title || `${look.name} · ${look.theme}`, tags: [destination, trip.season, look.name, look.theme, styleKeywords].filter(Boolean), searchUrl: pin.sourceUrl || pinterest.searchURL(query), resultIndex,
+        id: outfitRecommender.idFor(pin.image), url: pin.image, query, title: pin.title || `${look.name} · ${look.theme}`, tags: [destination, trip.season, look.name, look.theme, styleKeywords, styleDNAKeywords(profile.styleDNA), ...moment.requirements].filter(Boolean), searchUrl: pin.sourceUrl || pinterest.searchURL(query), resultIndex,
       })))))
         .then(groups => {
           if (epoch !== outfitRenderEpoch) return;
           const seen = new Set(); const candidates = groups.flat().filter(candidate => !claimedUrls.has(candidate.url) && !seen.has(candidate.url) && seen.add(candidate.url));
-          pools.set(lookId, { candidates, intent, queries }); paint(lookId);
+          pools.set(lookId, { candidates, intent, queries, moment }); paint(lookId);
         })
         .catch(error => {
           console.warn('Outfit candidate retrieval failed:', error.message);
@@ -4104,9 +4569,31 @@ const ui = (() => {
         outfitRecommender.record(user, candidate, 'open'); window.open(candidate.searchUrl, '_blank', 'noopener');
       } else if (action === 'save') {
         outfitRecommender.record(user, candidate, outfitRecommender.isSaved(user, candidate.id) ? 'unsave' : 'save'); paint(card.dataset.lookId);
-      } else if (action === 'hide') {
-        outfitRecommender.record(user, candidate, 'hide'); context.candidates = context.candidates.filter(c => c.id !== candidate.id); paint(card.dataset.lookId);
+      } else if (action === 'love' || action === 'more_like_this') {
+        outfitRecommender.record(user, candidate, action);
+        if (action === 'more_like_this') context.intent = `${context.intent} ${candidate.title || ''}`;
+        paint(card.dataset.lookId);
+      } else if (action === 'dislike') {
+        const reasons = pin.querySelector('.outfit-feedback-reasons');
+        reasons.hidden = !reasons.hidden;
       }
+      updateRecommenderStats();
+    });
+    root.addEventListener('click', (event) => {
+      const reason = event.target.closest('[data-outfit-feedback-reason]');
+      if (!reason) return;
+      const pin = reason.closest('[data-candidate-id]');
+      const card = reason.closest('[data-look-id]');
+      const context = card && pools.get(card.dataset.lookId);
+      const candidate = context?.ranked?.find((entry) => entry.id === pin?.dataset.candidateId);
+      if (!candidate) return;
+      outfitRecommender.record(user, candidate, 'dislike', {
+        reason: reason.dataset.outfitFeedbackReason,
+        lookId: card.dataset.lookId,
+        momentId: context.moment?.moments?.[0]?.id,
+      });
+      context.candidates = context.candidates.filter((entry) => entry.id !== candidate.id);
+      paint(card.dataset.lookId);
       updateRecommenderStats();
     });
 

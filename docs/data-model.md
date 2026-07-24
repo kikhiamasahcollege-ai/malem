@@ -12,6 +12,25 @@ type TravelProfile = {
   vibes: VibeKey[];             // multi-select, user-controlled
   budget: 'shoestring' | 'mid' | 'comfort' | 'luxury';
   pace:   'slow'       | 'balanced' | 'packed';
+  wardrobePresentation: 'women' | 'men' | 'unisex';
+  styleAgeBand: 'teen' | 'adult' | 'mature';
+  styleDNA: {
+    version: 1;
+    completed: boolean;
+    source: 'manual' | 'calibration' | 'pinterest-assisted';
+    archetypes: Array<'minimal' | 'classic' | 'romantic' | 'vintage' | 'streetwear' | 'sporty' | 'bohemian' | 'avant-garde'>;
+    silhouettes: Array<'relaxed' | 'tailored' | 'fitted' | 'oversized' | 'fluid' | 'structured'>;
+    palettes: Array<'neutral' | 'earthy' | 'monochrome' | 'pastel' | 'jewel-tone' | 'bright'>;
+    footwear: Array<'sneakers' | 'loafers' | 'flats' | 'boots' | 'sandals' | 'heels'>;
+    materials: string[];
+    patterns: string[];
+    avoid: string[];
+    closetStaples: string[];
+    intensity: number;          // 0 understated → 100 statement
+    practicality: number;       // 0 editorial → 100 highly practical
+    experimentation: number;    // 0 most like me → 100 style stretch
+    updatedAt: string | null;
+  };
   dietary: {
     halal: boolean;
     kosher: boolean;
@@ -91,6 +110,31 @@ type ItineraryBlock = {
   respects?: string[];          // which profile fields this block honored
 };
 ```
+
+## Outfit personalization
+
+The client derives an `OutfitMoment` from each day's named blocks instead of
+reducing the whole day to one generic setting:
+
+```ts
+type OutfitMoment = {
+  dayTheme: string;
+  moments: Array<{
+    id: string;
+    period: 'morning' | 'afternoon' | 'evening' | 'day';
+    label: string;
+    requirements: string[];
+  }>;
+  requirements: string[];
+  walkingLevel: 'light' | 'medium' | 'high';
+  transitions: string[];
+  weather: string;
+};
+```
+
+Raw public-image candidates and Love/Save/More-like-this/reason-coded feedback remain
+device-local. The confirmed `styleDNA` is a user-authored profile control and
+therefore synchronizes with the rest of the travel profile.
 
 ## Version 7 synchronized state
 
