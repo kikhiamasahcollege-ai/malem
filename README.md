@@ -127,6 +127,23 @@ JavaScript entry point, runs the full suite twice, rehearses migrations
 disaster-recovery schema, and rejects patch or worktree drift. The same gate
 runs in GitHub Actions for every push and pull request.
 
+The production orchestrator is inert unless the confirmation flag is present:
+
+```
+node scripts/production-release.mjs
+node scripts/production-release.mjs --confirm-production
+```
+
+The first command prints the guarded release sequence without contacting
+Cloudflare. After explicit production approval, the confirmed command reruns
+the clean preflight, authenticates, inspects the live schema, refuses partial or
+out-of-order migration state, records a D1 Time Travel recovery bookmark,
+applies only pending migrations, confirms that trip and collaboration counts
+and records are unchanged, checks foreign keys, deploys the production branch,
+and smoke-tests the canonical site and unauthenticated API boundary. The
+default command pins Wrangler for repeatable behavior; `WRANGLER_BIN` and
+`MALEM_WRANGLER_VERSION` are explicit operator overrides.
+
 ## Design principles
 
 - **Every preference is a control the user sets.** Never inferred from

@@ -112,8 +112,9 @@ test('database migrations cover plan, wardrobe, packing, booking, money, and con
 });
 
 test('the release gate rebuilds, double-tests, rehearses migrations, and runs in CI', async () => {
-  const [preflight, workflow, readme] = await Promise.all([
+  const [preflight, productionRelease, workflow, readme] = await Promise.all([
     read('scripts/release-preflight.mjs'),
+    read('scripts/production-release.mjs'),
     read('.github/workflows/verify.yml'),
     read('README.md'),
   ]);
@@ -122,7 +123,16 @@ test('the release gate rebuilds, double-tests, rehearses migrations, and runs in
   assert.match(preflight, /0003_plan_foundation\.sql/);
   assert.match(preflight, /0007_plan_invite_roles\.sql/);
   assert.match(preflight, /PRAGMA foreign_key_check/);
+  assert.match(preflight, /Release fixture/);
+  assert.match(preflight, /migration changed seeded collaboration records/);
   assert.match(preflight, /--require-clean/);
+  assert.match(productionRelease, /Refusing production write/);
+  assert.match(productionRelease, /Protected row counts changed/);
+  assert.match(productionRelease, /wrangler@/);
+  assert.match(productionRelease, /time-travel/);
+  assert.match(productionRelease, /'--yes'/);
+  assert.match(productionRelease, /Production release verified/);
   assert.match(workflow, /release-preflight\.mjs --require-clean/);
   assert.match(readme, /repeatable production gate/);
+  assert.match(readme, /production-release\.mjs --confirm-production/);
 });
