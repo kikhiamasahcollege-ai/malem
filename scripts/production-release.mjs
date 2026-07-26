@@ -140,6 +140,38 @@ export const PRODUCTION_MIGRATIONS = [
   },
 ];
 
+const markerTableName = (marker) => {
+  if (marker.type === 'column') return marker.name.split('.')[0];
+  if (marker.type === 'table' || marker.type === 'definition') return marker.name;
+  return null;
+};
+
+export const PRODUCTION_SCHEMA_TABLES = [...new Set([
+  'trips',
+  'trip_members',
+  'trip_invites',
+  ...PRODUCTION_MIGRATIONS.flatMap((migration) => [
+    ...migration.markers,
+    ...migration.forbidden,
+  ].map(markerTableName).filter(Boolean)),
+])].sort();
+
+const sqlLiteral = (value) => `'${String(value).replaceAll("'", "''")}'`;
+
+export const PRODUCTION_SCHEMA_OBJECT_QUERY = `
+  SELECT type AS kind, name, sql
+    FROM sqlite_schema
+   WHERE type IN ('table', 'index');
+`;
+
+export const PRODUCTION_SCHEMA_COLUMN_QUERY = PRODUCTION_SCHEMA_TABLES
+  .map((tableName) => `
+    SELECT 'column' AS kind,
+           ${sqlLiteral(`${tableName}.`)} || name AS name,
+           '' AS sql
+      FROM pragma_table_xinfo(${sqlLiteral(tableName)})`)
+  .join('\n    UNION ALL');
+
 const normalize = (value) => String(value ?? '').toLowerCase();
 
 export const schemaStateFromRows = (rows) => {
@@ -257,14 +289,10 @@ const queryD1 = (sql) => {
   }
 };
 
-const readSchemaState = () => schemaStateFromRows(queryD1(`
-  SELECT type AS kind, name, sql
-    FROM sqlite_master
-   WHERE type IN ('table', 'index');
-  SELECT 'column' AS kind, m.name || '.' || p.name AS name, '' AS sql
-    FROM sqlite_master AS m, pragma_table_info(m.name) AS p
-   WHERE m.type = 'table';
-`));
+const readSchemaState = () => schemaStateFromRows([
+  ...queryD1(PRODUCTION_SCHEMA_OBJECT_QUERY),
+  ...queryD1(PRODUCTION_SCHEMA_COLUMN_QUERY),
+]);
 
 const protectedCounts = () => {
   const rows = queryD1(`

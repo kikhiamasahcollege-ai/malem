@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PRODUCTION_MIGRATIONS,
+  PRODUCTION_SCHEMA_COLUMN_QUERY,
+  PRODUCTION_SCHEMA_OBJECT_QUERY,
+  PRODUCTION_SCHEMA_TABLES,
   classifyMigration,
   markerPresent,
   schemaStateFromRows,
@@ -35,17 +38,16 @@ const run = (command, args, { input } = {}) => {
   return result.stdout || '';
 };
 
-const schemaRows = (database) => JSON.parse(run('sqlite3', [
+const queryRows = (database, sql) => JSON.parse(run('sqlite3', [
   '-json',
   database,
-  `SELECT type AS kind, name, sql
-     FROM sqlite_master
-    WHERE type IN ('table', 'index')
-   UNION ALL
-   SELECT 'column' AS kind, m.name || '.' || p.name AS name, '' AS sql
-     FROM sqlite_master AS m, pragma_table_info(m.name) AS p
-    WHERE m.type = 'table';`,
+  sql,
 ]));
+
+const schemaRows = (database) => [
+  ...queryRows(database, PRODUCTION_SCHEMA_OBJECT_QUERY),
+  ...queryRows(database, PRODUCTION_SCHEMA_COLUMN_QUERY),
+];
 
 const rowsForMarkers = (markers) => {
   const rows = [];
@@ -147,6 +149,16 @@ test('actual V7 and V8 SQLite schemas classify as a complete migration sequence'
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('production schema inspection uses D1-authorized constant pragmas', () => {
+  assert.match(PRODUCTION_SCHEMA_OBJECT_QUERY, /sqlite_schema/);
+  assert.doesNotMatch(PRODUCTION_SCHEMA_OBJECT_QUERY, /sqlite_master/);
+  assert.doesNotMatch(PRODUCTION_SCHEMA_COLUMN_QUERY, /pragma_table_info\(m\.name\)/);
+  for (const tableName of ['trips', 'trip_members', 'trip_invites_v3']) {
+    assert.ok(PRODUCTION_SCHEMA_TABLES.includes(tableName));
+    assert.match(PRODUCTION_SCHEMA_COLUMN_QUERY, new RegExp(`pragma_table_xinfo\\('${tableName}'\\)`));
   }
 });
 
