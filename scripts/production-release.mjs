@@ -140,21 +140,12 @@ export const PRODUCTION_MIGRATIONS = [
   },
 ];
 
-const markerTableName = (marker) => {
-  if (marker.type === 'column') return marker.name.split('.')[0];
-  if (marker.type === 'table' || marker.type === 'definition') return marker.name;
-  return null;
-};
-
-export const PRODUCTION_SCHEMA_TABLES = [...new Set([
-  'trips',
-  'trip_members',
-  'trip_invites',
-  ...PRODUCTION_MIGRATIONS.flatMap((migration) => [
-    ...migration.markers,
-    ...migration.forbidden,
-  ].map(markerTableName).filter(Boolean)),
-])].sort();
+export const PRODUCTION_SCHEMA_COLUMN_TABLES = [...new Set(
+  PRODUCTION_MIGRATIONS
+    .flatMap((migration) => migration.markers)
+    .filter((marker) => marker.type === 'column')
+    .map((marker) => marker.name.split('.')[0]),
+)].sort();
 
 const sqlLiteral = (value) => `'${String(value).replaceAll("'", "''")}'`;
 
@@ -164,13 +155,20 @@ export const PRODUCTION_SCHEMA_OBJECT_QUERY = `
    WHERE type IN ('table', 'index');
 `;
 
-export const PRODUCTION_SCHEMA_COLUMN_QUERY = PRODUCTION_SCHEMA_TABLES
+const buildColumnQuery = (tableNames) => tableNames
   .map((tableName) => `
-    SELECT 'column' AS kind,
-           ${sqlLiteral(`${tableName}.`)} || name AS name,
-           '' AS sql
-      FROM pragma_table_xinfo(${sqlLiteral(tableName)})`)
-  .join('\n    UNION ALL');
+      SELECT 'column' AS kind,
+             ${sqlLiteral(`${tableName}.`)} || name AS name,
+             '' AS sql
+        FROM pragma_table_xinfo(${sqlLiteral(tableName)})`)
+  .join('\n      UNION ALL');
+
+export const PRODUCTION_SCHEMA_COLUMN_QUERIES = [];
+for (let offset = 0; offset < PRODUCTION_SCHEMA_COLUMN_TABLES.length; offset += 8) {
+  PRODUCTION_SCHEMA_COLUMN_QUERIES.push(buildColumnQuery(
+    PRODUCTION_SCHEMA_COLUMN_TABLES.slice(offset, offset + 8),
+  ));
+}
 
 const normalize = (value) => String(value ?? '').toLowerCase();
 
@@ -291,7 +289,7 @@ const queryD1 = (sql) => {
 
 const readSchemaState = () => schemaStateFromRows([
   ...queryD1(PRODUCTION_SCHEMA_OBJECT_QUERY),
-  ...queryD1(PRODUCTION_SCHEMA_COLUMN_QUERY),
+  ...PRODUCTION_SCHEMA_COLUMN_QUERIES.flatMap((sql) => queryD1(sql)),
 ]);
 
 const protectedCounts = () => {

@@ -12,9 +12,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PRODUCTION_MIGRATIONS,
-  PRODUCTION_SCHEMA_COLUMN_QUERY,
+  PRODUCTION_SCHEMA_COLUMN_QUERIES,
+  PRODUCTION_SCHEMA_COLUMN_TABLES,
   PRODUCTION_SCHEMA_OBJECT_QUERY,
-  PRODUCTION_SCHEMA_TABLES,
   classifyMigration,
   markerPresent,
   schemaStateFromRows,
@@ -38,15 +38,14 @@ const run = (command, args, { input } = {}) => {
   return result.stdout || '';
 };
 
-const queryRows = (database, sql) => JSON.parse(run('sqlite3', [
-  '-json',
-  database,
-  sql,
-]));
+const queryRows = (database, sql) => {
+  const stdout = run('sqlite3', ['-json', database, sql]).trim();
+  return stdout ? JSON.parse(stdout) : [];
+};
 
 const schemaRows = (database) => [
   ...queryRows(database, PRODUCTION_SCHEMA_OBJECT_QUERY),
-  ...queryRows(database, PRODUCTION_SCHEMA_COLUMN_QUERY),
+  ...PRODUCTION_SCHEMA_COLUMN_QUERIES.flatMap((sql) => queryRows(database, sql)),
 ];
 
 const rowsForMarkers = (markers) => {
@@ -155,10 +154,17 @@ test('actual V7 and V8 SQLite schemas classify as a complete migration sequence'
 test('production schema inspection uses D1-authorized constant pragmas', () => {
   assert.match(PRODUCTION_SCHEMA_OBJECT_QUERY, /sqlite_schema/);
   assert.doesNotMatch(PRODUCTION_SCHEMA_OBJECT_QUERY, /sqlite_master/);
-  assert.doesNotMatch(PRODUCTION_SCHEMA_COLUMN_QUERY, /pragma_table_info\(m\.name\)/);
-  for (const tableName of ['trips', 'trip_members', 'trip_invites_v3']) {
-    assert.ok(PRODUCTION_SCHEMA_TABLES.includes(tableName));
-    assert.match(PRODUCTION_SCHEMA_COLUMN_QUERY, new RegExp(`pragma_table_xinfo\\('${tableName}'\\)`));
+  assert.ok(PRODUCTION_SCHEMA_COLUMN_QUERIES.length > 1);
+  for (const sql of PRODUCTION_SCHEMA_COLUMN_QUERIES) {
+    assert.doesNotMatch(sql, /pragma_table_info\(m\.name\)/);
+    assert.ok((sql.match(/pragma_table_xinfo/g) || []).length <= 8);
+  }
+  for (const tableName of ['trips', 'plan_tasks', 'notification_outbox']) {
+    assert.ok(PRODUCTION_SCHEMA_COLUMN_TABLES.includes(tableName));
+    assert.match(
+      PRODUCTION_SCHEMA_COLUMN_QUERIES.join('\n'),
+      new RegExp(`pragma_table_xinfo\\('${tableName}'\\)`),
+    );
   }
 });
 
