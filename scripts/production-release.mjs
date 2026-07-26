@@ -164,9 +164,9 @@ const buildColumnQuery = (tableNames) => tableNames
   .join('\n      UNION ALL');
 
 export const PRODUCTION_SCHEMA_COLUMN_QUERIES = [];
-for (let offset = 0; offset < PRODUCTION_SCHEMA_COLUMN_TABLES.length; offset += 8) {
+for (let offset = 0; offset < PRODUCTION_SCHEMA_COLUMN_TABLES.length; offset += 2) {
   PRODUCTION_SCHEMA_COLUMN_QUERIES.push(buildColumnQuery(
-    PRODUCTION_SCHEMA_COLUMN_TABLES.slice(offset, offset + 8),
+    PRODUCTION_SCHEMA_COLUMN_TABLES.slice(offset, offset + 2),
   ));
 }
 

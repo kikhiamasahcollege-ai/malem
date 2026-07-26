@@ -157,7 +157,7 @@ test('production schema inspection uses D1-authorized constant pragmas', () => {
   assert.ok(PRODUCTION_SCHEMA_COLUMN_QUERIES.length > 1);
   for (const sql of PRODUCTION_SCHEMA_COLUMN_QUERIES) {
     assert.doesNotMatch(sql, /pragma_table_info\(m\.name\)/);
-    assert.ok((sql.match(/pragma_table_xinfo/g) || []).length <= 8);
+    assert.ok((sql.match(/pragma_table_xinfo/g) || []).length <= 2);
   }
   for (const tableName of ['trips', 'plan_tasks', 'notification_outbox']) {
     assert.ok(PRODUCTION_SCHEMA_COLUMN_TABLES.includes(tableName));
